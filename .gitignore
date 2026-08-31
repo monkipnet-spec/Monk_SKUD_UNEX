@@ -1,10 +1,12 @@
 build/
 backup/*
+!backup/.gitkeep
 data/events/*
+!data/events/.gitkeep
 data/card_state.csv
 data/active_cards.csv
 config/system.conf
-*.log
 config/users.csv
 config/controllers.csv
 config/departments.csv
+*.log

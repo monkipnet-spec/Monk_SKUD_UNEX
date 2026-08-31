@@ -28,6 +28,23 @@ WebServer::Res WebServer::file(const std::string&name,const std::string&type){co
 WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"controller_port\":"<<u.controller_port<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonDepartments(){auto v=departments_.list();std::ostringstream o;o<<"[";bool first=true;for(const auto&name:v){if(!first)o<<',';first=false;o<<"\""<<util::jsonEscape(name)<<"\"";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonCards(){auto v=attendance_.activities();std::ostringstream o;o<<"[";bool first=true;for(auto&a:v){if(!first)o<<',';first=false;o<<"{\"card\":\""<<util::jsonEscape(a.card)<<"\",\"user_id\":"<<a.user_id<<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\",\"department\":\""<<util::jsonEscape(a.department)<<"\",\"last_read\":\""<<a.last_read<<"\",\"last_event\":\""<<util::jsonEscape(a.last_event)<<"\",\"controller_node\":"<<a.controller_node<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonTodayAttendance(){
+    auto v=attendance_.todayAttendance();
+    std::ostringstream o;o<<"[";bool first=true;
+    for(const auto&a:v){
+        if(!first)o<<',';first=false;
+        o<<"{\"user_id\":"<<a.user_id
+         <<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\""
+         <<",\"department\":\""<<util::jsonEscape(a.department)<<"\""
+         <<",\"card\":\""<<util::jsonEscape(a.card)<<"\""
+         <<",\"arrival_time\":\""<<util::jsonEscape(a.arrival_time)<<"\""
+         <<",\"departure_time\":\""<<util::jsonEscape(a.departure_time)<<"\""
+         <<",\"status\":\""<<(a.presence==PresenceState::Present?"at_work":"left")<<"\""
+         <<"}";
+    }
+    o<<"]";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::route(const Req&r){
@@ -43,6 +60,7 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/users"&&r.method=="GET")return jsonUsers();
     if(r.path=="/api/departments"&&r.method=="GET")return jsonDepartments();
     if(r.path=="/api/cards/active")return jsonCards();
+    if(r.path=="/api/attendance/today"&&r.method=="GET")return jsonTodayAttendance();
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
     if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>255)u.controller_port=255;if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
     if(r.path=="/api/users/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.erase(std::stoi(f["id"]));}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}

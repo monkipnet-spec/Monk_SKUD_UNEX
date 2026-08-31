@@ -1,12 +1,30 @@
 Build verification: SUCCESS
-Previous verified version: 0.1.3
+Version: 0.1.5
 CMake target: monk-skud-unex
 C++ standard: C++20
-Web path regression test: retained from v0.1.1.
-Functional smoke test: department API add OK; department rename OK; assigned users renamed automatically; deleting department in use is blocked; clearing user department then deleting department OK; department web section is served.
-Legacy migration: user department names are ensured into config/departments.csv at application initialization.
-v0.1.2 compatibility: per-user controller_port retained; legacy users.csv compatibility retained.
 
-Version: 0.1.4
-CPU/RAM/process uptime header metrics: SUCCESS.
-SystemMetrics standalone test: uptime_seconds advanced 0 -> 2 seconds; CPU and RAM metrics returned successfully.
+Retained features:
+- Web UI path detection and build/web deployment.
+- Per-user controller_port with legacy users.csv compatibility.
+- Editable DepartmentManager and department dropdown.
+- CPU/RAM/process uptime header metrics.
+
+v0.1.5 daily attendance dashboard: SUCCESS.
+- /api/attendance/today aggregates data/events/YYYY-MM-DD.csv.
+- First arrival of the day is retained.
+- Last departure of the day is retained.
+- Last normal arrival/departure determines status: at_work / left.
+- accidental events are ignored by the daily arrival/departure aggregation.
+- current user name/department metadata is refreshed from UserManager.
+- web dashboard shows User, Department, Card, Arrival, Departure and Status.
+- dashboard refreshes automatically every 5 seconds.
+
+Functional smoke test:
+- user 2: arrival only -> at_work, departure empty.
+- user 1: arrival + accidental + departure -> left; arrival 08:01:00; departure 17:32:10.
+- authenticated API returned both rows correctly.
+- dashboard HTML contained "Активность за сегодня".
+
+Git runtime-data protection:
+- config/users.csv, config/controllers.csv and config/departments.csv are ignored.
+- .example templates are supplied for all three runtime CSV files.

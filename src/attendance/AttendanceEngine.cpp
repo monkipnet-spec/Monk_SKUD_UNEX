@@ -38,5 +38,16 @@ AttendanceEvent AttendanceEngine::onCardRead(const std::string&card,int node,con
 void AttendanceEngine::persistLocked(){std::map<std::string,PersistedCardState> p;for(auto&[c,s]:states_)p[c]={s.presence,s.last_read_text};store_.saveCardStates(p);std::vector<CardActivity>a;for(auto&[_,x]:activities_)a.push_back(x);store_.saveActivities(a);}
 std::vector<CardActivity> AttendanceEngine::activities()const{std::lock_guard lk(mu_);std::vector<CardActivity>v;for(auto it=activities_.rbegin();it!=activities_.rend();++it)v.push_back(it->second);return v;}
 std::vector<User> AttendanceEngine::presentUsers()const{std::lock_guard lk(mu_);std::vector<User>r;for(auto&[card,s]:states_)if(s.presence==PresenceState::Present){auto u=users_.byCard(card);if(u)r.push_back(*u);}return r;}
+std::vector<DailyAttendance> AttendanceEngine::todayAttendance()const{
+    auto rows=store_.loadDailyAttendance(util::todayLocal());
+    for(auto& row:rows){
+        auto u=users_.byId(row.user_id);
+        if(!u)continue;
+        row.user_name=u->last_name+" "+u->first_name;
+        if(!u->middle_name.empty())row.user_name+=" "+u->middle_name;
+        row.department=u->department;
+    }
+    return rows;
+}
 void AttendanceEngine::refreshUserMetadata(){std::lock_guard lk(mu_);for(auto&[card,a]:activities_){auto u=users_.byCard(card);if(u){a.user_id=u->id;a.user_name=u->last_name+" "+u->first_name;a.department=u->department;}else{a.user_id=0;a.user_name.clear();a.department.clear();}}persistLocked();}
 }
