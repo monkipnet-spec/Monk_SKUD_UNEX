@@ -1,3 +1,9 @@
+v0.2.4 simulator removal:
+- Dashboard no longer contains test card read controls: PASS.
+- Frontend simulate() removed: PASS.
+- POST /api/simulate server route removed: PASS.
+- Embedded web cache revision updated to v=024: PASS.
+
 Monk_SKUD_UNEX build verification
 Version: 0.2.3
 Date: 2026-08-31
