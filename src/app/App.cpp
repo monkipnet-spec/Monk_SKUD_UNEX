@@ -36,7 +36,7 @@ bool App::init(){
     departments_->ensure(users_->usedDepartments());
     attendance_=std::make_unique<AttendanceEngine>(*users_,*store_,cfg_->getInt("attendance.accidental_repeat_seconds",60));
     telegram_=std::make_unique<TelegramNotifier>(*cfg_);attendance_->setNotifier([this](const AttendanceEvent&e){telegram_->enqueue(e);});
-    controllers_=std::make_unique<ControllerManager>(*cfg_,*attendance_,root_+"/config/controllers.csv");if(!controllers_->loadControllers())controllers_->saveControllers();
+    controllers_=std::make_unique<ControllerManager>(*cfg_,*attendance_,*users_,root_+"/config/controllers.csv");if(!controllers_->loadControllers())controllers_->saveControllers();
     web_=std::make_unique<WebServer>(*cfg_,*users_,*departments_,*attendance_,*controllers_,*telegram_,root_);
     return true;
 }

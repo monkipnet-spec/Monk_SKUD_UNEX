@@ -31,6 +31,7 @@ public:
     static bool userWriteSupported();
     static std::string userWriteSupportMessage();
     UserWriteOutcome writeUser(std::uint8_t node,const User& user);
+    UserWriteOutcome deleteUser(std::uint8_t node,const User& user);
 
 private:
     std::optional<std::vector<std::uint8_t>> transact(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout_ms=120);

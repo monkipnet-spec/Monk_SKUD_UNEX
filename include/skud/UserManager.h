@@ -16,6 +16,7 @@ public:
     std::optional<User> byId(int id) const;
     User upsert(User user);
     bool erase(int id);
+    int eraseMany(const std::vector<int>& ids);
     bool assignCard(int id,const std::string&card);
     bool removeCard(const std::string&card);
     bool renameDepartment(const std::string& old_name,const std::string& new_name);

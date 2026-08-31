@@ -11,6 +11,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -27,7 +29,7 @@ void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.
 std::string WebServer::cookie(const Req&r,const std::string&name)const{auto it=r.headers.find("cookie");if(it==r.headers.end())return{};for(auto&p:util::split(it->second,';')){auto x=p.find('=');if(x!=std::string::npos&&util::trim(p.substr(0,x))==name)return util::trim(p.substr(x+1));}return{};}
 bool WebServer::authorized(const Req&r)const{auto sid=cookie(r,"SKUDSID");if(sid.empty())return false;std::lock_guard lk(sessions_mu_);return sessions_.count(sid)>0;}
 WebServer::Res WebServer::file(const std::string&name,const std::string&type){const auto path=std::filesystem::path(root_)/"web"/name;std::ifstream f(path,std::ios::binary);if(!f){return{404,"text/plain; charset=utf-8","UI file not found: "+path.string()};}std::ostringstream o;o<<f.rdbuf();Res x{200,type,o.str()};x.headers.push_back({"Cache-Control","no-store, no-cache, must-revalidate, max-age=0"});x.headers.push_back({"Pragma","no-cache"});return x;}
-WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"controller_port\":"<<u.controller_port<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"card_series\":\""<<util::jsonEscape(u.card_series)<<"\",\"card_number\":\""<<util::jsonEscape(u.card_number)<<"\",\"pin_code\":\""<<util::jsonEscape(u.pin_code)<<"\",\"access_mode\":\""<<util::jsonEscape(u.access_mode)<<"\",\"controller_port\":"<<u.controller_port<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonDepartments(){auto v=departments_.list();std::ostringstream o;o<<"[";bool first=true;for(const auto&name:v){if(!first)o<<',';first=false;o<<"\""<<util::jsonEscape(name)<<"\"";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonCards(){auto v=attendance_.activities();std::ostringstream o;o<<"[";bool first=true;for(auto&a:v){if(!first)o<<',';first=false;o<<"{\"card\":\""<<util::jsonEscape(a.card)<<"\",\"user_id\":"<<a.user_id<<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\",\"department\":\""<<util::jsonEscape(a.department)<<"\",\"last_read\":\""<<a.last_read<<"\",\"last_event\":\""<<util::jsonEscape(a.last_event)<<"\",\"controller_node\":"<<a.controller_node<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonTodayAttendance(){
@@ -51,6 +53,30 @@ WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();st
 WebServer::Res WebServer::jsonUserUploadJob(const ControllerUserUploadJob&job){
     std::ostringstream o;o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"success\":"<<job.success<<",\"failed\":"<<job.failed<<",\"skipped\":"<<job.skipped<<",\"results\":[";
     bool first=true;for(const auto&r:job.results){if(!first)o<<',';first=false;o<<"{\"user_id\":"<<r.user_id<<",\"controller_node\":"<<r.controller_node<<",\"status\":\""<<util::jsonEscape(r.status)<<"\",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";}o<<"]}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+WebServer::Res WebServer::jsonUserDeleteJob(const ControllerUserDeleteJob&job){
+    std::ostringstream o;
+    o<<"{\"id\":"<<job.id
+     <<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\""
+     <<",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"delete_from_system\":"<<(job.delete_from_system?"true":"false")
+     <<",\"total\":"<<job.total
+     <<",\"completed\":"<<job.completed
+     <<",\"success\":"<<job.success
+     <<",\"failed\":"<<job.failed
+     <<",\"local_deleted\":"<<job.local_deleted
+     <<",\"local_retained\":"<<job.local_retained
+     <<",\"results\":[";
+    bool first=true;
+    for(const auto&r:job.results){
+        if(!first)o<<',';first=false;
+        o<<"{\"user_id\":"<<r.user_id
+         <<",\"controller_node\":"<<r.controller_node
+         <<",\"status\":\""<<util::jsonEscape(r.status)<<"\""
+         <<",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";
+    }
+    o<<"]}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
@@ -86,7 +112,81 @@ WebServer::Res WebServer::route(const Req&r){
         auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
         auto job=controllers_.userUploadJob(id);if(!job)return{404,"application/json","{\"error\":\"upload job not found\"}"};return jsonUserUploadJob(*job);
     }
-    if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>16383)u.controller_port=16383;if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
+    if(r.path=="/api/users/delete-selected"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);
+        const bool delete_system=f["delete_system"]=="1";
+        const bool delete_controllers=f["delete_controllers"]=="1";
+        if(!delete_system&&!delete_controllers)
+            return{400,"application/json","{\"ok\":false,\"error\":\"delete target not selected\"}"};
+
+        std::vector<User> selected_users;
+        const auto all_users=f["all_users"]=="1";
+        if(all_users)selected_users=users_.list();
+        else{
+            for(int id:parseIntList(f["user_ids"])){
+                auto u=users_.byId(id);
+                if(u)selected_users.push_back(*u);
+            }
+        }
+        if(selected_users.empty())
+            return{400,"application/json","{\"ok\":false,\"error\":\"no users selected\"}"};
+
+        if(!delete_controllers){
+            std::vector<int> ids;ids.reserve(selected_users.size());
+            for(const auto&u:selected_users)ids.push_back(u.id);
+            const int removed=users_.eraseMany(ids);
+            if(removed>0)attendance_.refreshUserMetadata();
+            std::ostringstream o;o<<"{\"ok\":true,\"immediate\":true,\"local_deleted\":"<<removed<<"}";
+            return{200,"application/json",o.str()};
+        }
+
+        std::vector<int> selected_nodes;
+        const auto all_controllers=f["all_controllers"]=="1";
+        auto allc=controllers_.controllers();
+        if(all_controllers){
+            for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);
+        }else{
+            for(int node:parseIntList(f["controller_nodes"])){
+                auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+                if(it!=allc.end())selected_nodes.push_back(node);
+            }
+        }
+        if(selected_nodes.empty())
+            return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
+
+        auto id=controllers_.queueUserDelete(std::move(selected_users),std::move(selected_nodes),delete_system);
+        std::ostringstream o;
+        o<<"{\"ok\":true,\"immediate\":false,\"job_id\":"<<id
+         <<",\"delete_from_system\":"<<(delete_system?"true":"false")<<"}";
+        return{200,"application/json",o.str()};
+    }
+    if(r.path=="/api/users/delete-selected/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.userDeleteJob(id);
+        if(!job)return{404,"application/json","{\"error\":\"delete job not found\"}"};
+        return jsonUserDeleteJob(*job);
+    }
+    if(r.path=="/api/users/save"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}
+        u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];
+        u.card_series=util::trim(f["card_series"]);u.card_number=util::trim(f["card_number"]);u.pin_code=util::trim(f["pin_code"]);u.access_mode=f["access_mode"].empty()?"card":f["access_mode"];
+        std::uint16_t series=0,number=0;std::string validation_error;
+        const bool any_card=!u.card_series.empty()||!u.card_number.empty();
+        if(any_card){
+            if(!util::parseCardParts(u.card_series,u.card_number,series,number,&validation_error))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(validation_error)+"\"}"};
+            u.card_series=util::formatCardSeries(series);u.card_number=std::to_string(number);u.card=util::formatCardId(series,number);
+        }
+        if(!u.pin_code.empty()){
+            bool digits=u.pin_code.size()==4&&std::all_of(u.pin_code.begin(),u.pin_code.end(),[](unsigned char c){return std::isdigit(c);});
+            int pv=0;try{pv=std::stoi(u.pin_code);}catch(...){}
+            if(!digits||pv<1||pv>9999)return{400,"application/json","{\"ok\":false,\"error\":\"PIN должен состоять из 4 цифр и быть в диапазоне 0001..9999\"}"};
+        }
+        if(u.access_mode!="card"&&u.access_mode!="card_or_pin"&&u.access_mode!="card_and_pin")u.access_mode="card";
+        if((u.access_mode=="card_or_pin"||u.access_mode=="card_and_pin")&&u.pin_code.empty())return{400,"application/json","{\"ok\":false,\"error\":\"Для режима с PIN необходимо указать PIN пользователя\"}"};
+        try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>16383)u.controller_port=16383;
+        if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}
+        auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};
+    }
     if(r.path=="/api/users/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.erase(std::stoi(f["id"]));}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/departments/save"&&r.method=="POST"){
         auto f=util::parseForm(r.body);

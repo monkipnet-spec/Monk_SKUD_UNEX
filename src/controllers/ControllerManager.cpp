@@ -3,6 +3,7 @@
 #include "skud/Config.h"
 #include "skud/SerialPort.h"
 #include "skud/Unex721Protocol.h"
+#include "skud/UserManager.h"
 #include "skud/Util.h"
 #include <algorithm>
 #include <chrono>
@@ -12,7 +13,7 @@
 #include <sstream>
 
 namespace skud {
-ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,std::string p):cfg_(c),attendance_(a),path_(std::move(p)){}
+ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){}
 ControllerManager::~ControllerManager(){stop();}
 bool ControllerManager::loadControllers(){std::lock_guard lk(mu_);controllers_.clear();std::ifstream f(path_);if(!f)return false;std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()<4)continue;try{Controller x;x.node=std::stoi(c[0]);x.name=c[1];x.model=c[2];x.enabled=c[3]!="0";controllers_.push_back(x);}catch(...){}}return true;}
 bool ControllerManager::saveControllers()const{std::lock_guard lk(mu_);std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp);if(!f)return false;f<<"node;name;model;enabled\n";for(auto&x:controllers_)f<<x.node<<';'<<x.name<<';'<<x.model<<';'<<(x.enabled?1:0)<<"\n";f.close();std::error_code ec;std::filesystem::rename(tmp,path_,ec);if(ec){std::filesystem::remove(path_,ec);ec.clear();std::filesystem::rename(tmp,path_,ec);}return !ec;}
@@ -60,6 +61,28 @@ std::optional<ControllerUserUploadJob> ControllerManager::userUploadJob(std::uin
     std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(id);if(it==upload_jobs_.end())return std::nullopt;return it->second;
 }
 
+std::uint64_t ControllerManager::queueUserDelete(std::vector<User> users,std::vector<int> controller_nodes,bool delete_from_system){
+    std::lock_guard lk(delete_mu_);
+    const auto id=next_delete_id_++;
+    ControllerUserDeleteJob job;
+    job.id=id;
+    job.created_at=util::nowLocal();
+    job.state="queued";
+    job.delete_from_system=delete_from_system;
+    job.total=static_cast<int>(users.size()*controller_nodes.size());
+    delete_queue_.push_back(PendingUserDelete{id,std::move(users),std::move(controller_nodes),delete_from_system});
+    delete_jobs_[id]=std::move(job);
+    while(delete_jobs_.size()>20)delete_jobs_.erase(delete_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerUserDeleteJob> ControllerManager::userDeleteJob(std::uint64_t id)const{
+    std::lock_guard lk(delete_mu_);
+    auto it=delete_jobs_.find(id);
+    if(it==delete_jobs_.end())return std::nullopt;
+    return it->second;
+}
+
 void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
     PendingUserUpload pending;
     {
@@ -81,6 +104,52 @@ void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
     }
     std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="completed";
 }
+
+void ControllerManager::processOneUserDelete(Unex721Protocol& proto){
+    PendingUserDelete pending;
+    {
+        std::lock_guard lk(delete_mu_);
+        if(delete_queue_.empty())return;
+        pending=std::move(delete_queue_.front());
+        delete_queue_.pop_front();
+        auto it=delete_jobs_.find(pending.id);
+        if(it!=delete_jobs_.end())it->second.state="running";
+    }
+
+    bool metadata_changed=false;
+    for(const auto&u:pending.users){
+        bool all_controller_deletes_ok=true;
+        for(int node:pending.controller_nodes){
+            if(!running_)return;
+            auto out=proto.deleteUser(static_cast<std::uint8_t>(node),u);
+            ControllerUserDeleteResult r{u.id,node,out.status,out.message};
+            if(!out.ok)all_controller_deletes_ok=false;
+            std::lock_guard lk(delete_mu_);
+            auto it=delete_jobs_.find(pending.id);
+            if(it==delete_jobs_.end())continue;
+            auto&job=it->second;
+            ++job.completed;
+            if(out.ok)++job.success;else ++job.failed;
+            job.results.push_back(std::move(r));
+        }
+
+        if(pending.delete_from_system){
+            bool erased=false;
+            if(all_controller_deletes_ok)erased=users_.erase(u.id);
+            std::lock_guard lk(delete_mu_);
+            auto it=delete_jobs_.find(pending.id);
+            if(it!=delete_jobs_.end()){
+                if(erased){++it->second.local_deleted;metadata_changed=true;}
+                else ++it->second.local_retained;
+            }
+        }
+    }
+    if(metadata_changed)attendance_.refreshUserMetadata();
+
+    std::lock_guard lk(delete_mu_);
+    auto it=delete_jobs_.find(pending.id);
+    if(it!=delete_jobs_.end())it->second.state="completed";
+}
 void ControllerManager::loop(){
     using namespace std::chrono_literals; SerialPort port; std::map<int,std::chrono::steady_clock::time_point> last_sync;
     while(running_){
@@ -90,7 +159,7 @@ void ControllerManager::loop(){
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){

@@ -11,11 +11,11 @@
 #include <thread>
 #include <vector>
 
-namespace skud { class Config; class AttendanceEngine; class FileStore; class Unex721Protocol;
+namespace skud { class Config; class AttendanceEngine; class UserManager; class FileStore; class Unex721Protocol;
 class ControllerManager {
 public:
     using RawEventFn = std::function<void(const RawUnexEvent&)>;
-    ControllerManager(Config& cfg, AttendanceEngine& attendance, std::string controllers_path);
+    ControllerManager(Config& cfg, AttendanceEngine& attendance, UserManager& users, std::string controllers_path);
     ~ControllerManager();
     bool loadControllers();
     bool saveControllers() const;
@@ -33,18 +33,31 @@ public:
     bool userUploadProtocolReady() const;
     std::string userUploadProtocolMessage() const;
 
+    // User deletions use the same serial queue. When delete_from_system=true,
+    // the local record is removed only after every selected controller confirms
+    // deletion for that user.
+    std::uint64_t queueUserDelete(std::vector<User> users,std::vector<int> controller_nodes,bool delete_from_system);
+    std::optional<ControllerUserDeleteJob> userDeleteJob(std::uint64_t id) const;
+
 private:
     struct PendingUserUpload {
         std::uint64_t id{};
         std::vector<User> users;
         std::vector<int> controller_nodes;
     };
+    struct PendingUserDelete {
+        std::uint64_t id{};
+        std::vector<User> users;
+        std::vector<int> controller_nodes;
+        bool delete_from_system{false};
+    };
 
     void loop();
     void processOneUserUpload(Unex721Protocol& proto);
+    void processOneUserDelete(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
 
-    Config& cfg_; AttendanceEngine& attendance_; std::string path_;
+    Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
     mutable std::mutex mu_; std::vector<Controller> controllers_; std::string serial_status_{"OFFLINE"}; std::string serial_device_;
     std::atomic<bool> running_{false}; std::thread thread_; RawEventFn raw_cb_;
 
@@ -52,4 +65,9 @@ private:
     std::deque<PendingUserUpload> upload_queue_;
     std::map<std::uint64_t,ControllerUserUploadJob> upload_jobs_;
     std::uint64_t next_upload_id_{1};
+
+    mutable std::mutex delete_mu_;
+    std::deque<PendingUserDelete> delete_queue_;
+    std::map<std::uint64_t,ControllerUserDeleteJob> delete_jobs_;
+    std::uint64_t next_delete_id_{1};
 }; }

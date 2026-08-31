@@ -8,6 +8,27 @@
 #include <sstream>
 
 namespace skud::util {
+
+namespace {
+bool parseUnsignedBase(const std::string& text,int base,std::uint64_t max,std::uint64_t& out){
+    auto s=skud::util::trim(text);
+    if(s.empty())return false;
+    std::size_t start=0;
+    if(base==16&&s.size()>2&&s[0]=='0'&&(s[1]=='x'||s[1]=='X'))start=2;
+    if(start==s.size())return false;
+    for(std::size_t i=start;i<s.size();++i){
+        unsigned char c=static_cast<unsigned char>(s[i]);
+        if(base==10){if(!std::isdigit(c))return false;}
+        else if(!std::isxdigit(c))return false;
+    }
+    try{
+        std::size_t used=0;
+        auto v=std::stoull(s,&used,base);
+        if(used!=s.size()||v>max)return false;
+        out=v;return true;
+    }catch(...){return false;}
+}
+}
 std::string nowLocal() {
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -36,4 +57,58 @@ std::string hex(const std::vector<unsigned char>& data){ std::ostringstream o; f
 std::string sha256Hex(const std::string& s){ unsigned char out[SHA256_DIGEST_LENGTH]; SHA256(reinterpret_cast<const unsigned char*>(s.data()),s.size(),out); std::ostringstream o; for(auto c:out)o<<std::hex<<std::setw(2)<<std::setfill('0')<<(int)c; return o.str(); }
 std::string randomToken(std::size_t bytes){ std::random_device rd; std::ostringstream o; for(size_t i=0;i<bytes;i++)o<<std::hex<<std::setw(2)<<std::setfill('0')<<(rd()&0xff); return o.str(); }
 bool constantTimeEqual(const std::string&a,const std::string&b){ if(a.size()!=b.size())return false; unsigned char x=0; for(size_t i=0;i<a.size();++i)x|=a[i]^b[i]; return x==0; }
+
+bool parseCardParts(const std::string& series_text,const std::string& number_text,std::uint16_t& series,std::uint16_t& number,std::string* error){
+    std::uint64_t a=0,b=0;
+    auto st=trim(series_text), nt=trim(number_text);
+    if(st.empty()||nt.empty()){
+        if(error)*error="Нужно указать серию карты и номер карты";
+        return false;
+    }
+    if(st.size()>2&&st[0]=='0'&&(st[1]=='x'||st[1]=='X'))st=st.substr(2);
+    if(st.empty()||st.size()>4||!parseUnsignedBase(st,16,0xFFFF,a)){
+        if(error)*error="Серия карты должна содержать 1..4 HEX символа, например B112";
+        return false;
+    }
+    if(!parseUnsignedBase(nt,10,65535,b)){
+        if(error)*error="Номер карты должен быть десятичным числом 0..65535";
+        return false;
+    }
+    series=static_cast<std::uint16_t>(a);number=static_cast<std::uint16_t>(b);return true;
+}
+
+bool parseCardId(const std::string& text,std::uint16_t& series,std::uint16_t& number,std::string* error){
+    auto s=trim(text);
+    if(s.empty()){if(error)*error="Пустой номер карты";return false;}
+    const auto sep=s.find_first_of(":/,");
+    if(sep!=std::string::npos){
+        auto left=trim(s.substr(0,sep)), right=trim(s.substr(sep+1));
+        const bool explicit_hex=left.size()>2&&left[0]=='0'&&(left[1]=='x'||left[1]=='X');
+        const bool has_hex_letter=std::any_of(left.begin(),left.end(),[](unsigned char c){c=static_cast<unsigned char>(std::toupper(c));return c>='A'&&c<='F';});
+        if(explicit_hex||has_hex_letter)return parseCardParts(left,right,series,number,error);
+        // Backward compatibility with v0.2.1 UID1:UID2 decimal pairs.
+        std::uint64_t a=0,b=0;
+        if(!parseUnsignedBase(left,10,65535,a)||!parseUnsignedBase(right,10,65535,b)){
+            if(error)*error="Карта должна быть SERIES:NUMBER (например B112:12345) или старой парой UID1:UID2";
+            return false;
+        }
+        series=static_cast<std::uint16_t>(a);number=static_cast<std::uint16_t>(b);return true;
+    }
+    // Legacy single decimal/0xHEX card value.
+    std::uint64_t v=0;
+    int base=10;
+    if(s.size()>2&&s[0]=='0'&&(s[1]=='x'||s[1]=='X'))base=16;
+    if(!parseUnsignedBase(s,base,0xFFFFFFFFULL,v)){
+        if(error)*error="Неверный формат карты";
+        return false;
+    }
+    if(v<=65535){series=static_cast<std::uint16_t>(v);number=0;}
+    else{series=static_cast<std::uint16_t>((v>>16)&0xFFFF);number=static_cast<std::uint16_t>(v&0xFFFF);}
+    return true;
+}
+
+std::string formatCardSeries(std::uint16_t series){
+    std::ostringstream o;o<<std::hex<<std::uppercase<<std::setw(4)<<std::setfill('0')<<series;return o.str();
+}
+std::string formatCardId(std::uint16_t series,std::uint16_t number){return "0x"+formatCardSeries(series)+":"+std::to_string(number);}
 }

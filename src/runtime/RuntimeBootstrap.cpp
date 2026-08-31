@@ -78,7 +78,7 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
     // Runtime tables. These are created with headers only and are never
     // overwritten, so real subscriber/controller data is safe on restart.
     if (!writeTextIfMissing(base / "config" / "users.csv",
-            "id;enabled;last_name;first_name;middle_name;department;position;card;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure\n", error)) return false;
+            "id;enabled;last_name;first_name;middle_name;department;position;card;card_series;card_number;pin_code;access_mode;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure\n", error)) return false;
     if (!writeTextIfMissing(base / "config" / "departments.csv", "name\n", error)) return false;
     if (!writeTextIfMissing(base / "config" / "controllers.csv", "node;name;model;enabled\n", error)) return false;
     if (!writeTextIfMissing(base / "data" / "card_state.csv", "card;state;last_read\n", error)) return false;

@@ -10,11 +10,12 @@
 - синхронизация времени контроллера 0x23;
 - автообнаружение Node ID и сохранение контроллеров в `config/controllers.csv`;
 - файловое хранение без БД;
-- пользователи и карты в `config/users.csv`;
+- пользователи, двухчастный номер карты (серия + номер) и индивидуальный PIN в `config/users.csv`;
 - отдельный справочник отделов в `config/departments.csv`: добавление, переименование и удаление через веб;
 - отдел пользователя выбирается из выпадающего списка; переименование отдела автоматически обновляет пользователей; используемый отдел удалить нельзя;
-- для каждого пользователя задаётся `controller_port` — порт записи в контроллере UNEX (0 = не задан);
+- для каждого пользователя задаётся `controller_port` — адрес/слот записи пользователя в контроллере UNEX (0 = не задан, рабочий диапазон 1..16383);
 - мастер «Выгрузить в контроллеры»: все/выбранные пользователи → все/выбранные контроллеры, очередь задания и подробный результат по каждой паре пользователь/контроллер;
+- мастер удаления: все/выбранные пользователи можно удалить только из системы, только из выбранных/всех контроллеров или одновременно; при комбинированном удалении локальная карточка удаляется только после подтверждения всех выбранных контроллеров;
 - журнал событий по дням `data/events/YYYY-MM-DD.csv`;
 - текущее состояние карт `data/card_state.csv`;
 - список считанных карт `data/active_cards.csv`;
@@ -69,7 +70,7 @@ sudo systemctl status monk-skud-unex
 `config/users.csv`:
 
 ```text
-id;enabled;last_name;first_name;middle_name;department;position;card;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure
+id;enabled;last_name;first_name;middle_name;department;position;card;card_series;card_number;pin_code;access_mode;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure
 ```
 
 `config/controllers.csv`:
@@ -104,7 +105,7 @@ v0.1.1 originally added project-root detection for the web UI. Starting with v0.
 
 ## User controller port
 
-Each user has `controller_port` (0-255, `0` means not specified). The value is stored in `config/users.csv`, exposed by the web API/UI, and is reserved for the UNEX 721 user-download module. Old 12-column users CSV files remain import-compatible and are migrated with `controller_port=0`.
+Each user has `controller_port` (1..16383, `0` means not specified). The value is stored in `config/users.csv`, exposed by the web API/UI, and is reserved for the UNEX 721 user-download module. Old 12-column users CSV files remain import-compatible and are migrated with `controller_port=0`.
 
 ## v0.1.3 — Departments
 
@@ -166,6 +167,34 @@ HTTP API:
 
 The UNEX driver now implements the card/user write layout used by the MIT-licensed `oommgg/Soyal` AR-727H library and its bundled SOYAL protocol reference. The write operation uses Extended Protocol command `0x84`, user address `1..16383`, a 27-byte user record, XOR+SUM checksums, and the `FF 00 5A A5` envelope. Every successful ACK is followed by command `0x87` to read the same address back and verify UID/status before the job reports success. Serial Extended Protocol responses are supported directly over RS485/USB-COM; legacy compact `0x7E` reads remain as a fallback for discovery/event experiments.
 
-Card input accepts either a single 32-bit decimal/`0xHEX` value or an exact `UID1:UID2` pair (each 0..65535). A single value up to 65535 is stored as `UID1` with `UID2=0`; larger values are split into high/low 16-bit words.
+Starting with v0.2.2 the web form uses the physical two-block card notation explicitly: **card series** (1..4 HEX characters, for example `B112`) plus **card number** (decimal `0..65535`). Internally this maps to the two 16-bit UID words used by the H-series record. Legacy single values and `UID1:UID2` CSV records remain import-compatible.
 
 Protocol reference/code source: https://github.com/oommgg/Soyal (MIT). Hardware verification on the actual UNEX 721 is still required before bulk production upload.
+
+
+## v0.2.1 — Удаление пользователей из системы и контроллеров
+
+В разделе «Пользователи» добавлен мастер **«Удалить пользователей»**. Поддерживаются режимы:
+
+- выбранные или все пользователи;
+- только локальная система Monk SKUD;
+- только выбранные или все контроллеры;
+- одновременно локальная система + выбранные/все контроллеры.
+
+Удаление записи в контроллере выполняется безопасно для одного точного адреса пользователя через SOYAL H-series Extended Protocol `0x84`: UID1/UID2 записываются как `0xFFFF/0xFFFF`, режим карты устанавливается в `0` (disabled). Затем команда `0x87` читает тот же адрес обратно. Успех фиксируется только когда запись отключена и UID действительно очищены до `FFFF:FFFF`. Команда диапазонного сброса `0x85` для одиночного удаления не используется, чтобы исключить риск очистки соседних адресов.
+
+При режиме «из системы и контроллеров» локальный пользователь удаляется **только после успешного подтверждения удаления из каждого выбранного контроллера**. Если один контроллер вернул NACK, не отвечает или контрольное чтение не совпало, локальная карточка пользователя сохраняется, чтобы администратор мог повторить операцию после восстановления связи.
+
+HTTP API:
+
+- `POST /api/users/delete-selected`;
+- `GET /api/users/delete-selected/status?job_id=N`.
+
+Удаление из контроллеров выполняется через очередь `ControllerManager` и не конкурирует с polling COM-порта.
+
+
+## v0.2.2 — Серия/номер карты и индивидуальный PIN
+
+Карточка пользователя теперь хранит карту как два отдельных поля: `card_series` (HEX-серия, например `B112`) и `card_number` (десятичный номер `0..65535`). Для совместимости сохраняется каноническое поле `card`, а старые CSV с одиночным `card` или `UID1:UID2` автоматически читаются и нормализуются.
+
+Добавлен необязательный `pin_code` из 4 цифр (`0001..9999`) и `access_mode`: `card`, `card_or_pin`, `card_and_pin`. При выгрузке командой `0x84` PIN записывается в четыре байта пользовательской записи; после ACK команда `0x87` проверяет обратно UID, PIN и режим доступа. Для ручного PIN-входа на H-series используется M4 и режим `card_or_pin`: на клавиатуре вводится 5-значный адрес пользователя + 4-значный PIN.

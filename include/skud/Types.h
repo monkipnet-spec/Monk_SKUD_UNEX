@@ -17,8 +17,12 @@ struct User {
     std::string middle_name;
     std::string department;
     std::string position;
-    std::string card;
-    int controller_port{}; // UNEX controller port assigned to this user; 0 = not specified
+    std::string card; // canonical internal card id, e.g. 0xB112:12345
+    std::string card_series; // printed HEX series, e.g. B112
+    std::string card_number; // printed decimal card number
+    std::string pin_code; // optional 4-digit individual PIN; empty = not configured
+    std::string access_mode{"card"}; // card, card_or_pin, card_and_pin
+    int controller_port{}; // UNEX controller user address; 0 = not specified
     std::string valid_from;
     std::string valid_until;
     bool telegram_arrival{true};
@@ -86,6 +90,28 @@ struct ControllerUserUploadJob {
     int failed{};
     int skipped{};
     std::vector<ControllerUserUploadResult> results;
+};
+
+
+struct ControllerUserDeleteResult {
+    int user_id{};
+    int controller_node{};
+    std::string status;
+    std::string message;
+};
+
+struct ControllerUserDeleteJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed
+    bool delete_from_system{false};
+    int total{};
+    int completed{};
+    int success{};
+    int failed{};
+    int local_deleted{};
+    int local_retained{};
+    std::vector<ControllerUserDeleteResult> results;
 };
 
 struct RawUnexEvent {

@@ -1,86 +1,16 @@
 Build verification: SUCCESS
-Version: 0.2.0
+Version: 0.2.2
 CMake target: monk-skud-unex
 C++ standard: C++20
 
-Retained features:
-- Web UI path detection and build/web deployment.
-- Per-user controller_port with legacy users.csv compatibility.
-- Editable DepartmentManager and department dropdown.
-- CPU/RAM/process uptime header metrics.
-
-v0.1.5 daily attendance dashboard: SUCCESS.
-- /api/attendance/today aggregates data/events/YYYY-MM-DD.csv.
-- First arrival of the day is retained.
-- Last departure of the day is retained.
-- Last normal arrival/departure determines status: at_work / left.
-- accidental events are ignored by the daily arrival/departure aggregation.
-- current user name/department metadata is refreshed from UserManager.
-- web dashboard shows User, Department, Card, Arrival, Departure and Status.
-- dashboard refreshes automatically every 5 seconds.
-
-Functional smoke test:
-- user 2: arrival only -> at_work, departure empty.
-- user 1: arrival + accidental + departure -> left; arrival 08:01:00; departure 17:32:10.
-- authenticated API returned both rows correctly.
-- dashboard HTML contained "Активность за сегодня".
-
-Git runtime-data protection:
-- config/users.csv, config/controllers.csv and config/departments.csv are ignored.
-- .example templates are supplied for all three runtime CSV files.
-
-
-v0.1.6 runtime bootstrap verification
-- CMake Release build: PASS (100% Built target monk-skud-unex)
-- Empty working directory bootstrap: PASS
-- Created config/, data/, data/events/, backup/, web/: PASS
-- Created runtime CSV/config files: PASS
-- Embedded web files byte-for-byte equal to source web assets: PASS
-- Existing runtime files are preserved: PASS
-
-
-v0.1.7 button press visualization
-- All button/.button controls use a visible pressed state.
-- Press: translate/scale + brightness reduction + inset shadow.
-- Radial highlight expands while pressed.
-- Hover, keyboard focus-visible and disabled states are included.
-- CSS-only implementation works for dynamically created buttons and login page.
-
-
-v0.1.8 guaranteed button feedback
-- JS delegated pointer/keyboard handler applies skud-pressed for 240 ms.
-- Works for dynamically generated buttons and .button links.
-- Login page has the same press feedback.
-- style.css/app.js use versioned URLs to break stale browser cache.
-- WebServer sends Cache-Control: no-store and Pragma: no-cache for UI files.
-- RuntimeBootstrap refreshes embedded web assets on every start; config/data files remain preserved.
+v0.2.2 card series + PIN:
 - Release build: PASS ([100%] Built target monk-skud-unex).
-- Runtime web refresh test: stale style.css replaced by embedded v0.1.8 asset: PASS.
-- app.js refreshed and delegated press handler present: PASS.
-- HTTP style.css response contains Cache-Control no-store and Pragma no-cache: PASS.
-- Existing config/users.csv remained byte-for-byte unchanged across restart: PASS.
-
-
-v0.1.9 user upload wizard
-- CMake Release build: PASS ([100%] Built target monk-skud-unex).
-- Users page contains "Выгрузить в контроллеры": PASS.
-- all/selected user and controller selection UI: PASS.
-- POST /api/controllers/upload-users creates a job: PASS.
-- GET /api/controllers/upload-users/status returns per-pair result: PASS.
-- Serial writes are owned by ControllerManager queue, not WebServer: PASS.
-- Unverified UNEX 721 EEPROM user write remains safety-gated: PASS.
-- Test selected user #1 -> controller #2: state=blocked, status=blocked_protocol as designed until protocol confirmation.
-- serial.enabled=false mutex starvation fixed by releasing ControllerManager mutex before sleep.
-
-
-v0.2.0 protocol integration:
-- Added SOYAL H-series Extended Protocol framing FF 00 5A A5 + 16-bit length + XOR/SUM.
-- User write now verifies each ACK with command 0x87 read-back and UID/status comparison.
-- Added RS485 extended-frame reader.
-- Enabled user upload command 0x84 with documented 27-byte card record.
-- Controller user address range expanded to 1..16383.
-- Extended event decoding maps user address and UID1/UID2 from AR-727H-compatible response layout.
-- Legacy 0x7E protocol remains as fallback.
-- Source reference: oommgg/Soyal (MIT); physical UNEX 721 verification pending.
-- Extended frame golden-vector test: PASS (C++ frame bytes exactly match the PHP newExtPack algorithm for node=1/cmd=0x84).
-- Pseudo-TTY hardware-emulation test: PASS. writeUser emitted 0x84, accepted ACK, emitted 0x87 read-back, verified UID/status, and returned ok.
+- User card UI split into HEX series (example B112) + decimal number 0..65535.
+- Canonical protocol card for B112 / 12345: UID1=0xB112, UID2=12345.
+- Optional 4-digit PIN 0001..9999 stored per user.
+- Access modes: card, card_or_pin, card_and_pin.
+- 0x84 record sends PIN as four bytes and mode bits; 0x87 read-back verifies UID, PIN and access mode.
+- Pseudo-TTY E2E: B112 / 12345, PIN 4321, card_or_pin -> addr=100, UID1=0xB112, UID2=12345, PIN=4321, mode=0x98: PASS.
+- API upload job completed success=1 failed=0: PASS.
+- Legacy 13-column users.csv UID1:UID2 import: PASS; automatically normalized with empty PIN and card-only mode.
+- Runtime CSV bootstrap/header and users.csv.example updated.
