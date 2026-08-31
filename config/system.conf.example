@@ -15,5 +15,10 @@ telegram.chat_id=
 telegram.notify_arrival=true
 telegram.notify_departure=true
 telegram.retry_count=3
+reports.schedule.enabled=false
+reports.schedule.period=daily
+reports.schedule.time=18:00
+reports.schedule.weekday=1
+reports.schedule.month_day=1
 auth.username=admin
 # auth.salt and auth.password_hash are generated at first start

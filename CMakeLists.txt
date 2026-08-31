@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.2.3 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.2.5 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -39,6 +39,7 @@ add_executable(monk-skud-unex
   src/unex/Unex721Protocol.cpp
   src/controllers/ControllerManager.cpp
   src/telegram/TelegramNotifier.cpp
+  src/reports/ReportManager.cpp
   src/web/WebServer.cpp
 )
 target_include_directories(monk-skud-unex PRIVATE include "${CMAKE_BINARY_DIR}/generated")

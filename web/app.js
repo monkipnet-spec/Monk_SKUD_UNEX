@@ -16,10 +16,11 @@ let USERS=[];
 let CONTROLLERS=[];
 let DEPARTMENTS=[];
 let USERS_LOADED=false;
+let REPORT_RANGES={};
 
 function enc(o){return new URLSearchParams(o)}
 async function api(url,opt={}){let r=await fetch(url,opt);if(r.status===401){location='/login.html';throw new Error('auth');}return r}
-function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='controllers')loadControllers();}
+function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='controllers')loadControllers();if(id==='reports')loadReportSettings();}
 
 function formatUptime(total){total=Math.max(0,Math.floor(Number(total)||0));const d=Math.floor(total/86400);total%=86400;const h=Math.floor(total/3600);total%=3600;const m=Math.floor(total/60);const sec=total%60;const clock=[h,m,sec].map(x=>String(x).padStart(2,'0')).join(':');return d>0?d+'д '+clock:clock;}
 async function refreshStatus(){let r=await api('/api/status');let s=await r.json();serialStatus.textContent=s.serial_status;serialStatus.className=s.serial_status==='ONLINE'?'ok':'bad';serialDevice.textContent=s.serial_device||'USB-COM не найден';presentCount.textContent=s.present_count;repeatSec.textContent=s.repeat_seconds+' сек';if(window.cpuLoad)cpuLoad.textContent=Number(s.cpu_percent||0).toFixed(1)+'%';if(window.ramLoad)ramLoad.textContent=Number(s.ram_percent||0).toFixed(1)+'%';if(window.ramDetail)ramDetail.textContent=(s.ram_used_mb||0)+' / '+(s.ram_total_mb||0)+' MB';if(window.uptimeValue)uptimeValue.textContent=formatUptime(s.uptime_seconds);}
@@ -308,6 +309,93 @@ async function assignCard(){let o=Object.fromEntries(new FormData(assignForm));a
 async function removeCard(card){if(!confirm('Отвязать карту '+card+' от пользователя?'))return;await api('/api/cards/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card})});await loadCards();}
 async function renameController(node,name){await api('/api/controllers/name',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({node,name})});}
 async function importUsers(file){if(!file)return;let text=await file.text();let r=await api('/api/import/users',{method:'POST',headers:{'Content-Type':'text/csv'},body:text});let j=await r.json();alert(j.ok?'Импорт выполнен':'Ошибка: '+j.error);await loadUsers();await loadDepartments(false);}
+
+
+async function loadReportSettings(resetRange=false){
+    const r=await api('/api/reports/settings');
+    const j=await r.json();
+    REPORT_RANGES={today:j.today,week:j.week,month:j.month};
+    const from=document.getElementById('reportFrom'),to=document.getElementById('reportTo');
+    if(from&&to&&(resetRange||!from.value||!to.value)){from.value=j.today.from;to.value=j.today.to;}
+    const sc=j.schedule||{};
+    if(window.reportScheduleEnabled)reportScheduleEnabled.checked=!!sc.enabled;
+    if(window.reportSchedulePeriod)reportSchedulePeriod.value=sc.period||'daily';
+    if(window.reportScheduleTime)reportScheduleTime.value=sc.time||'18:00';
+    if(window.reportScheduleWeekday)reportScheduleWeekday.value=String(sc.weekday||1);
+    if(window.reportScheduleMonthDay)reportScheduleMonthDay.value=String(sc.month_day||1);
+    updateReportScheduleFields();
+    if(window.reportScheduleStatus){
+        let text='Автоматические отчёты ещё не отправлялись.';
+        let cls='report-schedule-status muted';
+        if(sc.last_status==='ok'){
+            text=`Последняя отправка: ${sc.last_sent_at||'—'} · период ${sc.last_period||'—'} · успешно`;
+            cls='report-schedule-status ok';
+        }else if(sc.last_status==='error'){
+            text=`Последняя попытка завершилась ошибкой: ${sc.last_error||'неизвестная ошибка'}`;
+            cls='report-schedule-status bad';
+        }else if(sc.last_status==='running'){
+            text='Автоматический отчёт сейчас формируется/отправляется.';
+        }
+        reportScheduleStatus.className=cls;reportScheduleStatus.textContent=text;
+    }
+}
+
+async function applyReportPreset(kind){
+    if(!REPORT_RANGES[kind])await loadReportSettings();
+    const range=REPORT_RANGES[kind];if(!range)return;
+    reportFrom.value=range.from;reportTo.value=range.to;
+    reportActionMsg.textContent='';
+}
+
+function selectedReportRange(){
+    const from=reportFrom.value,to=reportTo.value;
+    if(!from||!to){alert('Укажите начальную и конечную дату отчёта');return null;}
+    if(from>to){alert('Начальная дата не может быть больше конечной');return null;}
+    return {from,to};
+}
+
+async function previewReport(){
+    const range=selectedReportRange();if(!range)return;
+    reportActionMsg.className='report-message muted';reportActionMsg.textContent='Формирование отчёта...';
+    const r=await api('/api/reports/preview?'+new URLSearchParams(range));
+    const j=await r.json();
+    if(!r.ok||!j.ok){reportActionMsg.className='report-message bad';reportActionMsg.textContent='Ошибка: '+(j.error||'не удалось сформировать отчёт');return;}
+    reportPreview.textContent=j.content||'';
+    reportActionMsg.className='report-message ok';
+    reportActionMsg.textContent=`Сформирован ${j.filename}: ${j.days} дн., пользователей ${j.users}, записей пользователь/день ${j.rows}.`;
+}
+
+function downloadReport(){
+    const range=selectedReportRange();if(!range)return;
+    location.href='/api/reports/download?'+new URLSearchParams(range);
+}
+
+async function sendReportTelegram(){
+    const range=selectedReportRange();if(!range)return;
+    if(!confirm(`Отправить TXT-отчёт за ${range.from} — ${range.to} в Telegram?`))return;
+    reportActionMsg.className='report-message muted';reportActionMsg.textContent='Формирование и отправка файла в Telegram...';
+    const r=await api('/api/reports/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(range)});
+    let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){reportActionMsg.className='report-message bad';reportActionMsg.textContent='Ошибка Telegram: '+(j.error||'не удалось отправить файл');return;}
+    reportActionMsg.className='report-message ok';reportActionMsg.textContent='Отчёт '+(j.filename||'')+' отправлен в Telegram.';
+}
+
+function updateReportScheduleFields(){
+    if(!window.reportSchedulePeriod)return;
+    const enabled=reportScheduleEnabled.checked,period=reportSchedulePeriod.value;
+    [reportSchedulePeriod,reportScheduleTime,reportScheduleWeekday,reportScheduleMonthDay].forEach(x=>x.disabled=!enabled);
+    if(window.reportWeekdayLabel)reportWeekdayLabel.classList.toggle('hidden',period!=='weekly');
+    if(window.reportMonthDayLabel)reportMonthDayLabel.classList.toggle('hidden',period!=='monthly');
+}
+
+async function saveReportSchedule(){
+    const o={enabled:reportScheduleEnabled.checked?'1':'0',period:reportSchedulePeriod.value,time:reportScheduleTime.value||'18:00',weekday:reportScheduleWeekday.value||'1',month_day:reportScheduleMonthDay.value||'1'};
+    const r=await api('/api/reports/settings',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){reportScheduleStatus.className='report-schedule-status bad';reportScheduleStatus.textContent='Ошибка: '+(j.error||'не удалось сохранить расписание');return;}
+    reportScheduleStatus.className='report-schedule-status ok';reportScheduleStatus.textContent='Расписание сохранено.';
+    await loadReportSettings();
+}
+
 async function importSettings(file){if(!file)return;let text=await file.text();let r=await api('/api/import/settings',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});let j=await r.json();alert(j.ok?'Настройки импортированы. Перезапустите службу.':'Ошибка импорта');}
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}

@@ -1,3 +1,15 @@
+v0.2.5 attendance reports / Telegram schedule:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- Manual report range 2026-08-30..2026-08-31: PASS (2 days, 2 users, 3 user/day rows).
+- TXT download response + Content-Disposition filename: PASS.
+- Manual Telegram send with missing token/chat returns controlled HTTP 400 and keeps generated TXT: PASS.
+- Telegram sendDocument E2E with fake curl: correct chat_id, document=@data/reports/...txt, caption and /sendDocument endpoint: PASS.
+- Schedule settings GET/POST persistence: PASS.
+- Internal daily scheduler due test: previous completed day report generated, Telegram configuration error persisted once without tight retry loop: PASS.
+- Scheduled Telegram success E2E with fake curl: last_sent_at/last_period/last_status=ok persisted: PASS.
+- Runtime data/reports directory bootstrap + Git ignore: PASS.
+- Web UI cache revision: v=025.
+
 v0.2.4 simulator removal:
 - Dashboard no longer contains test card read controls: PASS.
 - Frontend simulate() removed: PASS.

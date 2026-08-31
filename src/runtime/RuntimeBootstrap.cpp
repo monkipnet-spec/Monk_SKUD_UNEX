@@ -70,6 +70,7 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
              base / "config",
              base / "data",
              base / "data" / "events",
+             base / "data" / "reports",
              base / "backup",
              base / "web"}) {
         if (!makeDir(dir, error)) return false;

@@ -3,6 +3,7 @@
 #include "skud/Config.h"
 #include "skud/ControllerManager.h"
 #include "skud/DepartmentManager.h"
+#include "skud/ReportManager.h"
 #include "skud/TelegramNotifier.h"
 #include "skud/UserManager.h"
 #include "skud/Util.h"
@@ -18,7 +19,7 @@
 #include <sstream>
 
 namespace skud {
-WebServer::WebServer(Config&c,UserManager&u,DepartmentManager&d,AttendanceEngine&a,ControllerManager&cm,TelegramNotifier&t,std::string root):cfg_(c),users_(u),departments_(d),attendance_(a),controllers_(cm),telegram_(t),root_(std::move(root)){}
+WebServer::WebServer(Config&c,UserManager&u,DepartmentManager&d,AttendanceEngine&a,ControllerManager&cm,TelegramNotifier&t,ReportManager&r,std::string root):cfg_(c),users_(u),departments_(d),attendance_(a),controllers_(cm),telegram_(t),reports_(r),root_(std::move(root)){}
 WebServer::~WebServer(){stop();}
 bool WebServer::start(){if(running_)return true;server_fd_=::socket(AF_INET,SOCK_STREAM,0);if(server_fd_<0)return false;int one=1;setsockopt(server_fd_,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons(cfg_.getInt("server.port",8080));if(bind(server_fd_,(sockaddr*)&addr,sizeof(addr))<0||listen(server_fd_,32)<0){::close(server_fd_);server_fd_=-1;return false;}running_=true;thread_=std::thread(&WebServer::loop,this);return true;}
 void WebServer::stop(){running_=false;if(server_fd_>=0){shutdown(server_fd_,SHUT_RDWR);::close(server_fd_);server_fd_=-1;}if(thread_.joinable())thread_.join();}
@@ -80,6 +81,24 @@ WebServer::Res WebServer::jsonUserDeleteJob(const ControllerUserDeleteJob&job){
     return{200,"application/json; charset=utf-8",o.str()};
 }
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonReportSettings(){
+    const auto today=reports_.todayRange(),week=reports_.currentWeekRange(),month=reports_.currentMonthRange();
+    const auto s=reports_.schedule();
+    std::ostringstream o;
+    o<<"{\"today\":{\"from\":\""<<today.from<<"\",\"to\":\""<<today.to<<"\"}"
+     <<",\"week\":{\"from\":\""<<week.from<<"\",\"to\":\""<<week.to<<"\"}"
+     <<",\"month\":{\"from\":\""<<month.from<<"\",\"to\":\""<<month.to<<"\"}"
+     <<",\"schedule\":{\"enabled\":"<<(s.enabled?"true":"false")
+     <<",\"period\":\""<<util::jsonEscape(s.period)<<"\""
+     <<",\"time\":\""<<util::jsonEscape(s.time)<<"\""
+     <<",\"weekday\":"<<s.weekday
+     <<",\"month_day\":"<<s.month_day
+     <<",\"last_sent_at\":\""<<util::jsonEscape(s.last_sent_at)<<"\""
+     <<",\"last_period\":\""<<util::jsonEscape(s.last_period)<<"\""
+     <<",\"last_status\":\""<<util::jsonEscape(s.last_status)<<"\""
+     <<",\"last_error\":\""<<util::jsonEscape(s.last_error)<<"\"}}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/login"&&r.method=="POST"){auto f=util::parseForm(r.body);auto salt=cfg_.get("auth.salt");auto hash=util::sha256Hex(salt+f["password"]);if(f["username"]==cfg_.get("auth.username","admin")&&util::constantTimeEqual(hash,cfg_.get("auth.password_hash"))){auto sid=util::randomToken();{std::lock_guard lk(sessions_mu_);sessions_[sid]=f["username"];}Res x{200,"application/json","{\"ok\":true}"};x.headers.push_back({"Set-Cookie","SKUDSID="+sid+"; Path=/; HttpOnly; SameSite=Strict"});return x;}return{401,"application/json","{\"ok\":false}"};}
     if(r.path=="/login.html")return file("login.html","text/html; charset=utf-8");
@@ -94,6 +113,29 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/departments"&&r.method=="GET")return jsonDepartments();
     if(r.path=="/api/cards/active")return jsonCards();
     if(r.path=="/api/attendance/today"&&r.method=="GET")return jsonTodayAttendance();
+    if(r.path=="/api/reports/settings"&&r.method=="GET")return jsonReportSettings();
+    if(r.path=="/api/reports/settings"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);
+        int weekday=1,month_day=1;try{weekday=std::stoi(f["weekday"]);}catch(...){}try{month_day=std::stoi(f["month_day"]);}catch(...){}
+        std::string err;bool ok=reports_.saveSchedule(f["enabled"]=="1",f["period"],f["time"],weekday,month_day,err);
+        return{ok?200:400,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};
+    }
+    if(r.path=="/api/reports/preview"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);AttendanceReport report;std::string err;
+        if(!reports_.build(q["from"],q["to"],report,err))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}"};
+        std::ostringstream o;o<<"{\"ok\":true,\"filename\":\""<<util::jsonEscape(report.filename)<<"\",\"days\":"<<report.days<<",\"users\":"<<report.users<<",\"rows\":"<<report.rows<<",\"content\":\""<<util::jsonEscape(report.content)<<"\"}";
+        return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/reports/download"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);AttendanceReport report;std::string err;
+        if(!reports_.build(q["from"],q["to"],report,err))return{400,"text/plain; charset=utf-8",err};
+        Res x{200,"text/plain; charset=utf-8",report.content};x.headers.push_back({"Content-Disposition","attachment; filename=\""+report.filename+"\""});return x;
+    }
+    if(r.path=="/api/reports/send"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);AttendanceReport report;std::string err;bool ok=reports_.sendToTelegram(f["from"],f["to"],report,err);
+        std::ostringstream o;o<<"{\"ok\":"<<(ok?"true":"false")<<",\"filename\":\""<<util::jsonEscape(report.filename)<<"\",\"error\":\""<<util::jsonEscape(err)<<"\"}";
+        return{ok?200:400,"application/json; charset=utf-8",o.str()};
+    }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
     if(r.path=="/api/controllers/upload-users"&&r.method=="POST"){
         auto f=util::parseForm(r.body);std::vector<User> selected_users;std::vector<int> selected_nodes;

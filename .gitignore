@@ -3,6 +3,8 @@ backup/*
 !backup/.gitkeep
 data/events/*
 !data/events/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
 data/card_state.csv
 data/active_cards.csv
 config/system.conf
