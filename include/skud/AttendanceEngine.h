@@ -1,0 +1,34 @@
+#pragma once
+#include "skud/FileStore.h"
+#include "skud/Types.h"
+#include <chrono>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace skud {
+class UserManager;
+class AttendanceEngine {
+public:
+    using NotifyFn = std::function<void(const AttendanceEvent&)>;
+    AttendanceEngine(UserManager& users, FileStore& store, int repeat_seconds);
+    void setNotifier(NotifyFn fn);
+    AttendanceEvent onCardRead(const std::string& card, int controller_node, const std::string& controller_name, const std::string& raw_hex="");
+    std::vector<CardActivity> activities() const;
+    std::vector<User> presentUsers() const;
+    void refreshUserMetadata();
+private:
+    struct State { PresenceState presence{PresenceState::Absent}; std::chrono::system_clock::time_point last_read{}; bool has_last{false}; std::string last_read_text; };
+    static std::chrono::system_clock::time_point parseTime(const std::string& s, bool& ok);
+    void persistLocked();
+    UserManager& users_;
+    FileStore& store_;
+    int repeat_seconds_;
+    mutable std::mutex mu_;
+    std::map<std::string,State> states_;
+    std::map<std::string,CardActivity> activities_;
+    NotifyFn notifier_;
+};
+}

@@ -1,0 +1,7 @@
+build/
+backup/*
+data/events/*
+data/card_state.csv
+data/active_cards.csv
+config/system.conf
+*.log

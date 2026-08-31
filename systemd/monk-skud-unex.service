@@ -1,0 +1,19 @@
+[Unit]
+Description=Monk SKUD UNEX 721 Access Control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skud
+Group=skud
+SupplementaryGroups=dialout
+WorkingDirectory=/opt/Monk_SKUD_UNEX
+ExecStart=/opt/Monk_SKUD_UNEX/build/monk-skud-unex /opt/Monk_SKUD_UNEX
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

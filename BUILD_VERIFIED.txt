@@ -1,0 +1,4 @@
+Build verification: SUCCESS
+CMake target: monk-skud-unex
+C++ standard: C++20
+Functional smoke test: login OK; user creation OK; first card read = arrival; immediate second read = accidental; active-card list OK.
