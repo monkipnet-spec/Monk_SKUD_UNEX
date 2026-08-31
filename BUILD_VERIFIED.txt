@@ -1,8 +1,12 @@
 Build verification: SUCCESS
-Version: 0.1.3
+Previous verified version: 0.1.3
 CMake target: monk-skud-unex
 C++ standard: C++20
 Web path regression test: retained from v0.1.1.
 Functional smoke test: department API add OK; department rename OK; assigned users renamed automatically; deleting department in use is blocked; clearing user department then deleting department OK; department web section is served.
 Legacy migration: user department names are ensured into config/departments.csv at application initialization.
 v0.1.2 compatibility: per-user controller_port retained; legacy users.csv compatibility retained.
+
+Version: 0.1.4
+CPU/RAM/process uptime header metrics: SUCCESS.
+SystemMetrics standalone test: uptime_seconds advanced 0 -> 2 seconds; CPU and RAM metrics returned successfully.

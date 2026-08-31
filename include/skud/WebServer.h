@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "skud/SystemMetrics.h"
 namespace skud { class Config; class UserManager; class DepartmentManager; class AttendanceEngine; class ControllerManager; class TelegramNotifier;
 class WebServer {
 public:
@@ -17,6 +18,6 @@ private:
     void loop(); void handleClient(int fd); Res route(const Req& r);
     bool authorized(const Req&r)const; std::string cookie(const Req&r,const std::string&name)const;
     Res file(const std::string&name,const std::string&type); Res jsonUsers(); Res jsonDepartments(); Res jsonCards(); Res jsonControllers(); Res jsonStatus();
-    Config&cfg_;UserManager&users_;DepartmentManager&departments_;AttendanceEngine&attendance_;ControllerManager&controllers_;TelegramNotifier&telegram_;std::string root_;
+    Config&cfg_;UserManager&users_;DepartmentManager&departments_;AttendanceEngine&attendance_;ControllerManager&controllers_;TelegramNotifier&telegram_;SystemMetrics system_metrics_;std::string root_;
     std::atomic<bool>running_{false};int server_fd_{-1};std::thread thread_;mutable std::mutex sessions_mu_;std::map<std::string,std::string>sessions_;
 }; }
