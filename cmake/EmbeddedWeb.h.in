@@ -1,0 +1,13 @@
+#pragma once
+#include <cstddef>
+
+namespace skud::embedded {
+inline constexpr unsigned char login_html[] = {@EMBED_LOGIN_HTML@};
+inline constexpr std::size_t login_html_size = sizeof(login_html);
+inline constexpr unsigned char index_html[] = {@EMBED_INDEX_HTML@};
+inline constexpr std::size_t index_html_size = sizeof(index_html);
+inline constexpr unsigned char app_js[] = {@EMBED_APP_JS@};
+inline constexpr std::size_t app_js_size = sizeof(app_js);
+inline constexpr unsigned char style_css[] = {@EMBED_STYLE_CSS@};
+inline constexpr std::size_t style_css_size = sizeof(style_css);
+}

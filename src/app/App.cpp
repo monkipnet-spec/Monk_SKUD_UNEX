@@ -4,6 +4,7 @@
 #include "skud/ControllerManager.h"
 #include "skud/DepartmentManager.h"
 #include "skud/FileStore.h"
+#include "skud/RuntimeBootstrap.h"
 #include "skud/TelegramNotifier.h"
 #include "skud/UserManager.h"
 #include "skud/Util.h"
@@ -17,7 +18,11 @@ namespace skud {
 App::App(std::string root):root_(std::move(root)){}
 App::~App(){stop();}
 bool App::init(){
-    std::filesystem::create_directories(root_+"/config");std::filesystem::create_directories(root_+"/data/events");
+    std::string bootstrap_error;
+    if(!ensureRuntimeLayout(root_,bootstrap_error)){
+        std::cerr<<"Cannot initialize runtime directory "<<root_<<": "<<bootstrap_error<<"\n";
+        return false;
+    }
     cfg_=std::make_unique<Config>(root_+"/config/system.conf");
     if(!cfg_->load()){
         cfg_->set("server.port","8080");cfg_->set("serial.enabled","true");cfg_->set("serial.device","auto");cfg_->set("serial.baudrate","9600");cfg_->set("controllers.scan_from","1");cfg_->set("controllers.scan_to","16");cfg_->set("controllers.poll_interval_ms","200");cfg_->set("attendance.accidental_repeat_seconds","60");cfg_->set("time_sync.enabled","true");cfg_->set("time_sync.interval_minutes","60");cfg_->set("telegram.enabled","false");cfg_->set("telegram.bot_token","");cfg_->set("telegram.chat_id","");cfg_->set("telegram.notify_arrival","true");cfg_->set("telegram.notify_departure","true");cfg_->set("telegram.retry_count","3");cfg_->set("auth.username","admin");auto salt=util::randomToken(16);cfg_->set("auth.salt",salt);cfg_->set("auth.password_hash",util::sha256Hex(salt+"admin"));cfg_->save();

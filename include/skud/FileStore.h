@@ -15,6 +15,7 @@ public:
     std::map<std::string,PersistedCardState> loadCardStates() const;
     bool saveActivities(const std::vector<CardActivity>& activities);
     std::vector<CardActivity> loadActivities() const;
+    std::vector<DailyAttendance> loadDailyAttendance(const std::string& date) const;
     bool backupFile(const std::string& path) const;
 private:
     std::string root_;

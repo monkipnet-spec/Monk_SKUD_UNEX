@@ -1,10 +1,29 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.1.5 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.1.6 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+
+# Embed the current web UI into the executable. RuntimeBootstrap writes these
+# files into an empty working directory on the first start.
+function(skud_embed_file input_file output_var)
+  file(READ "${input_file}" _skud_hex HEX)
+  string(REGEX REPLACE "([0-9A-Fa-f][0-9A-Fa-f])" "0x\\1," _skud_bytes "${_skud_hex}")
+  set(${output_var} "${_skud_bytes}" PARENT_SCOPE)
+endfunction()
+
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/login.html" EMBED_LOGIN_HTML)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/index.html" EMBED_INDEX_HTML)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/app.js" EMBED_APP_JS)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/style.css" EMBED_STYLE_CSS)
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated/skud")
+configure_file(
+  "${CMAKE_SOURCE_DIR}/cmake/EmbeddedWeb.h.in"
+  "${CMAKE_BINARY_DIR}/generated/skud/EmbeddedWeb.h"
+  @ONLY
+)
 add_executable(monk-skud-unex
   src/main.cpp
   src/app/App.cpp
@@ -12,6 +31,7 @@ add_executable(monk-skud-unex
   src/utils/Util.cpp
   src/system/SystemMetrics.cpp
   src/storage/FileStore.cpp
+  src/runtime/RuntimeBootstrap.cpp
   src/users/UserManager.cpp
   src/departments/DepartmentManager.cpp
   src/attendance/AttendanceEngine.cpp
@@ -21,7 +41,7 @@ add_executable(monk-skud-unex
   src/telegram/TelegramNotifier.cpp
   src/web/WebServer.cpp
 )
-target_include_directories(monk-skud-unex PRIVATE include)
+target_include_directories(monk-skud-unex PRIVATE include "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(monk-skud-unex PRIVATE OpenSSL::Crypto Threads::Threads)
 target_compile_options(monk-skud-unex PRIVATE -Wall -Wextra -Wpedantic)
 

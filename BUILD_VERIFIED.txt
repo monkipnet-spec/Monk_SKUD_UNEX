@@ -28,3 +28,12 @@ Functional smoke test:
 Git runtime-data protection:
 - config/users.csv, config/controllers.csv and config/departments.csv are ignored.
 - .example templates are supplied for all three runtime CSV files.
+
+
+v0.1.6 runtime bootstrap verification
+- CMake Release build: PASS (100% Built target monk-skud-unex)
+- Empty working directory bootstrap: PASS
+- Created config/, data/, data/events/, backup/, web/: PASS
+- Created runtime CSV/config files: PASS
+- Embedded web files byte-for-byte equal to source web assets: PASS
+- Existing runtime files are preserved: PASS

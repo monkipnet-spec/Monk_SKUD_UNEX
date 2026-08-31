@@ -45,6 +45,17 @@ struct CardActivity {
     int controller_node{};
 };
 
+struct DailyAttendance {
+    int user_id{};
+    std::string user_name;
+    std::string department;
+    std::string card;
+    std::string arrival_time;
+    std::string departure_time;
+    PresenceState presence{PresenceState::Absent};
+    std::string last_event_time;
+};
+
 struct AttendanceEvent {
     std::string timestamp;
     AttendanceEventType type{AttendanceEventType::RawControllerEvent};

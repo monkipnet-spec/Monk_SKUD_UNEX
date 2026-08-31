@@ -18,6 +18,7 @@ public:
     AttendanceEvent onCardRead(const std::string& card, int controller_node, const std::string& controller_name, const std::string& raw_hex="");
     std::vector<CardActivity> activities() const;
     std::vector<User> presentUsers() const;
+    std::vector<DailyAttendance> todayAttendance() const;
     void refreshUserMetadata();
 private:
     struct State { PresenceState presence{PresenceState::Absent}; std::chrono::system_clock::time_point last_read{}; bool has_last{false}; std::string last_read_text; };

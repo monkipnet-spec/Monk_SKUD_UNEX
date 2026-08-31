@@ -41,7 +41,7 @@ sudo apt install -y build-essential cmake pkg-config libssl-dev curl
 cd /opt/Monk_SKUD_UNEX
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
-./build/monk-skud-unex /opt/Monk_SKUD_UNEX
+./build/monk-skud-unex
 ```
 
 Первый вход: `admin / admin`. Сразу измените пароль в веб-интерфейсе.
@@ -96,7 +96,7 @@ Repository: `https://github.com/monkipnet-spec/Monk_SKUD_UNEX.git`
 
 ## v0.1.1 — Web UI path fix
 
-The executable now auto-detects the project root when started from the source root, `build/`, or `/opt/Monk_SKUD_UNEX`. CMake also copies `web/` into `build/web/`, so `/login.html` remains available when the binary is started directly from the build directory.
+v0.1.1 originally added project-root detection for the web UI. Starting with v0.1.6 the runtime rule is simpler: without an explicit path argument, the application uses the **current working directory** as its runtime root and creates missing runtime files there.
 
 ## User controller port
 
@@ -119,3 +119,20 @@ Each user has `controller_port` (0-255, `0` means not specified). The value is s
 ### Runtime CSV и Git
 
 Рабочие `config/users.csv`, `config/controllers.csv` и `config/departments.csv` являются данными конкретного сервера и исключены из Git. В репозитории хранятся только `.example`-шаблоны. Это предотвращает конфликты `git pull` и исключает перезапись пользователей/отделов/обнаруженных контроллеров при обновлении кода.
+
+
+## v0.1.6 — Автоматическая инициализация рабочей папки
+
+Если программа запускается без аргумента пути, рабочей папкой становится каталог, из которого выполнен запуск (`current working directory`). При первом запуске приложение автоматически создаёт недостающие каталоги `config/`, `data/`, `data/events/`, `backup/`, `web/` и рабочие файлы `system.conf`, `users.csv`, `departments.csv`, `controllers.csv`, `card_state.csv`, `active_cards.csv`.
+
+Веб-интерфейс (`login.html`, `index.html`, `app.js`, `style.css`) встраивается в бинарник при сборке и восстанавливается из него, если соответствующего файла нет в рабочей папке. Уже существующие конфиги, пользователи, отделы, контроллеры, журналы и web-файлы **никогда не перезаписываются** этой инициализацией.
+
+Пример:
+
+```bash
+mkdir -p /opt/my-skud-runtime
+cd /opt/my-skud-runtime
+/path/to/monk-skud-unex
+```
+
+Все рабочие файлы будут созданы внутри `/opt/my-skud-runtime`. Для systemd используется `WorkingDirectory=/opt/Monk_SKUD_UNEX`, поэтому тот же принцип работает и при запуске как службы. При необходимости по-прежнему можно явно передать runtime-каталог первым аргументом.
