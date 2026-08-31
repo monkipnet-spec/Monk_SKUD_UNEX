@@ -21,6 +21,7 @@ void normalizeUser(User& u){
     if(!validPin(u.pin_code))u.pin_code.clear();
 
     std::uint16_t series=0,number=0;
+    const auto legacy_card=util::trim(u.card);
     if(!util::trim(u.card_series).empty()||!util::trim(u.card_number).empty()){
         if(util::parseCardParts(u.card_series,u.card_number,series,number,nullptr)){
             u.card_series=util::formatCardSeries(series);
@@ -29,7 +30,7 @@ void normalizeUser(User& u){
             return;
         }
     }
-    if(!util::trim(u.card).empty()&&util::parseCardId(u.card,series,number,nullptr)){
+    if(!legacy_card.empty()&&util::parseCardId(legacy_card,series,number,nullptr)){
         u.card_series=util::formatCardSeries(series);
         u.card_number=std::to_string(number);
         u.card=util::formatCardId(series,number);

@@ -32,7 +32,7 @@ async function loadTodayAttendance(){
 }
 
 function cardDisplay(u){if(u&&u.card_series&&u.card_number!==undefined&&u.card_number!==null&&u.card_number!=='')return `${u.card_series} / ${u.card_number}`;return u&&u.card?cardTextFromRaw(u.card):'—';}
-function cardTextFromRaw(card){const s=String(card||'');let m=s.match(/^0x([0-9A-Fa-f]{1,4}):(\d+)$/);if(m)return m[1].toUpperCase().padStart(4,'0')+' / '+m[2];m=s.match(/^([0-9A-Fa-f]{1,4}):(\d+)$/);if(m&&/[A-Fa-f]/.test(m[1]))return m[1].toUpperCase().padStart(4,'0')+' / '+m[2];return s||'—';}
+function cardTextFromRaw(card){const s=String(card||'').trim();let m=s.match(/^(\d+):(\d+)$/);if(m)return Number(m[1])+' / '+Number(m[2]);return s||'—';}
 function accessModeText(mode){return ({card:'Только карта',card_or_pin:'Карта ИЛИ PIN',card_and_pin:'Карта + PIN'})[mode]||'Только карта';}
 async function loadUsers(){USERS=await (await api('/api/users')).json();USERS_LOADED=true;usersBody.innerHTML=USERS.map(u=>`<tr><td>${u.id}</td><td>${esc(u.last_name+' '+u.first_name+' '+u.middle_name)}</td><td>${esc(u.department||'—')}</td><td>${esc(u.position)}</td><td><b>${esc(cardDisplay(u))}</b></td><td>${u.pin_code?'<span class="status-pill status-present">PIN задан</span>':'—'}<small class="table-subtext">${esc(accessModeText(u.access_mode))}</small></td><td>${u.controller_port||'—'}</td><td><button class="mini" onclick="editUser(${u.id})">Изменить</button> <button class="mini danger" onclick="deleteUser(${u.id})">Удалить</button></td></tr>`).join('');}
 
@@ -291,9 +291,10 @@ async function editUser(id=0){
 
 async function saveUser(){
     let f=new FormData(userForm),o=Object.fromEntries(f.entries());o.enabled=userForm.elements.enabled.checked?'1':'0';
-    o.card_series=(o.card_series||'').trim().toUpperCase();o.card_number=(o.card_number||'').trim();o.pin_code=(o.pin_code||'').trim();
+    o.card_series=(o.card_series||'').trim();o.card_number=(o.card_number||'').trim();o.pin_code=(o.pin_code||'').trim();
     if((o.card_series&&!o.card_number)||(!o.card_series&&o.card_number))return alert('Укажите одновременно серию и номер карты');
-    if(o.card_series&&!/^[0-9A-F]{1,4}$/.test(o.card_series))return alert('Серия карты: 1–4 HEX символа, например B112');
+    if(o.card_series&&!/^\d{1,5}$/.test(o.card_series))return alert('Серия карты должна быть десятичным числом 0..65535');
+    if(o.card_series&&Number(o.card_series)>65535)return alert('Серия карты не может быть больше 65535');
     if(o.card_number&&!/^\d{1,5}$/.test(o.card_number))return alert('Номер карты должен быть десятичным числом 0..65535');
     if(o.card_number&&Number(o.card_number)>65535)return alert('Номер карты не может быть больше 65535');
     if(o.pin_code&&(!/^\d{4}$/.test(o.pin_code)||Number(o.pin_code)<1))return alert('PIN должен содержать 4 цифры: 0001..9999');

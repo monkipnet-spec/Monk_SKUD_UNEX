@@ -65,9 +65,8 @@ bool parseCardParts(const std::string& series_text,const std::string& number_tex
         if(error)*error="Нужно указать серию карты и номер карты";
         return false;
     }
-    if(st.size()>2&&st[0]=='0'&&(st[1]=='x'||st[1]=='X'))st=st.substr(2);
-    if(st.empty()||st.size()>4||!parseUnsignedBase(st,16,0xFFFF,a)){
-        if(error)*error="Серия карты должна содержать 1..4 HEX символа, например B112";
+    if(!parseUnsignedBase(st,10,65535,a)){
+        if(error)*error="Серия карты должна быть десятичным числом 0..65535";
         return false;
     }
     if(!parseUnsignedBase(nt,10,65535,b)){
@@ -83,23 +82,17 @@ bool parseCardId(const std::string& text,std::uint16_t& series,std::uint16_t& nu
     const auto sep=s.find_first_of(":/,");
     if(sep!=std::string::npos){
         auto left=trim(s.substr(0,sep)), right=trim(s.substr(sep+1));
-        const bool explicit_hex=left.size()>2&&left[0]=='0'&&(left[1]=='x'||left[1]=='X');
-        const bool has_hex_letter=std::any_of(left.begin(),left.end(),[](unsigned char c){c=static_cast<unsigned char>(std::toupper(c));return c>='A'&&c<='F';});
-        if(explicit_hex||has_hex_letter)return parseCardParts(left,right,series,number,error);
-        // Backward compatibility with v0.2.1 UID1:UID2 decimal pairs.
         std::uint64_t a=0,b=0;
         if(!parseUnsignedBase(left,10,65535,a)||!parseUnsignedBase(right,10,65535,b)){
-            if(error)*error="Карта должна быть SERIES:NUMBER (например B112:12345) или старой парой UID1:UID2";
+            if(error)*error="Карта должна быть записана как СЕРИЯ:НОМЕР, оба значения десятичные 0..65535";
             return false;
         }
         series=static_cast<std::uint16_t>(a);number=static_cast<std::uint16_t>(b);return true;
     }
-    // Legacy single decimal/0xHEX card value.
+    // Backward compatibility for old single *decimal* card values only.
     std::uint64_t v=0;
-    int base=10;
-    if(s.size()>2&&s[0]=='0'&&(s[1]=='x'||s[1]=='X'))base=16;
-    if(!parseUnsignedBase(s,base,0xFFFFFFFFULL,v)){
-        if(error)*error="Неверный формат карты";
+    if(!parseUnsignedBase(s,10,0xFFFFFFFFULL,v)){
+        if(error)*error="Неверный формат карты: серия и номер должны быть десятичными";
         return false;
     }
     if(v<=65535){series=static_cast<std::uint16_t>(v);number=0;}
@@ -107,8 +100,6 @@ bool parseCardId(const std::string& text,std::uint16_t& series,std::uint16_t& nu
     return true;
 }
 
-std::string formatCardSeries(std::uint16_t series){
-    std::ostringstream o;o<<std::hex<<std::uppercase<<std::setw(4)<<std::setfill('0')<<series;return o.str();
-}
-std::string formatCardId(std::uint16_t series,std::uint16_t number){return "0x"+formatCardSeries(series)+":"+std::to_string(number);}
+std::string formatCardSeries(std::uint16_t series){return std::to_string(series);}
+std::string formatCardId(std::uint16_t series,std::uint16_t number){return std::to_string(series)+":"+std::to_string(number);}
 }

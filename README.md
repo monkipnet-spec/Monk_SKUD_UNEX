@@ -167,7 +167,7 @@ HTTP API:
 
 The UNEX driver now implements the card/user write layout used by the MIT-licensed `oommgg/Soyal` AR-727H library and its bundled SOYAL protocol reference. The write operation uses Extended Protocol command `0x84`, user address `1..16383`, a 27-byte user record, XOR+SUM checksums, and the `FF 00 5A A5` envelope. Every successful ACK is followed by command `0x87` to read the same address back and verify UID/status before the job reports success. Serial Extended Protocol responses are supported directly over RS485/USB-COM; legacy compact `0x7E` reads remain as a fallback for discovery/event experiments.
 
-Starting with v0.2.2 the web form uses the physical two-block card notation explicitly: **card series** (1..4 HEX characters, for example `B112`) plus **card number** (decimal `0..65535`). Internally this maps to the two 16-bit UID words used by the H-series record. Legacy single values and `UID1:UID2` CSV records remain import-compatible.
+Starting with v0.2.3 the web form uses two decimal parts explicitly: **card series** (`0..65535`) followed by **card number** (`0..65535`). Each part maps directly to one 16-bit UID word used by the H-series record. The earlier v0.2.2 HEX-series interpretation was corrected. Erroneous HEX/alphabetic series are no longer accepted for controller upload and must be corrected by the administrator before use.
 
 Protocol reference/code source: https://github.com/oommgg/Soyal (MIT). Hardware verification on the actual UNEX 721 is still required before bulk production upload.
 
@@ -195,6 +195,11 @@ HTTP API:
 
 ## v0.2.2 — Серия/номер карты и индивидуальный PIN
 
-Карточка пользователя теперь хранит карту как два отдельных поля: `card_series` (HEX-серия, например `B112`) и `card_number` (десятичный номер `0..65535`). Для совместимости сохраняется каноническое поле `card`, а старые CSV с одиночным `card` или `UID1:UID2` автоматически читаются и нормализуются.
+Карточка пользователя хранит карту как два отдельных поля: `card_series` и `card_number`. В v0.2.2 серия ошибочно трактовалась как HEX; начиная с v0.2.3 серия и номер являются десятичными значениями `0..65535`. Ошибочные HEX/буквенные серии из v0.2.2 автоматически не преобразуются: их нужно исправить вручную, чтобы исключить запись неверного UID в контроллер.
 
 Добавлен необязательный `pin_code` из 4 цифр (`0001..9999`) и `access_mode`: `card`, `card_or_pin`, `card_and_pin`. При выгрузке командой `0x84` PIN записывается в четыре байта пользовательской записи; после ACK команда `0x87` проверяет обратно UID, PIN и режим доступа. Для ручного PIN-входа на H-series используется M4 и режим `card_or_pin`: на клавиатуре вводится 5-значный адрес пользователя + 4-значный PIN.
+
+
+## v0.2.3 — Десятичная серия карты и компактное поле
+
+Серия карты исправлена на десятичную (`0..65535`) и в форме пользователя расположена непосредственно перед номером карты в узком поле. Внутренний канонический формат новой записи: `series:number`, например `112:12345`. Оба значения напрямую передаются как два 16-битных UID-слова протокола. Ошибочный v0.2.2 формат с HEX/буквенной серией не допускается к новой записи и должен быть исправлен вручную; это исключает тихое преобразование неправильной серии в другой UID.

@@ -17,8 +17,8 @@ struct User {
     std::string middle_name;
     std::string department;
     std::string position;
-    std::string card; // canonical internal card id, e.g. 0xB112:12345
-    std::string card_series; // printed HEX series, e.g. B112
+    std::string card; // canonical internal card id, e.g. 112:12345
+    std::string card_series; // printed decimal series, e.g. 112
     std::string card_number; // printed decimal card number
     std::string pin_code; // optional 4-digit individual PIN; empty = not configured
     std::string access_mode{"card"}; // card, card_or_pin, card_and_pin

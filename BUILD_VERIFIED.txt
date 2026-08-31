@@ -1,16 +1,17 @@
-Build verification: SUCCESS
-Version: 0.2.2
-CMake target: monk-skud-unex
-C++ standard: C++20
+Monk_SKUD_UNEX build verification
+Version: 0.2.3
+Date: 2026-08-31
 
-v0.2.2 card series + PIN:
-- Release build: PASS ([100%] Built target monk-skud-unex).
-- User card UI split into HEX series (example B112) + decimal number 0..65535.
-- Canonical protocol card for B112 / 12345: UID1=0xB112, UID2=12345.
-- Optional 4-digit PIN 0001..9999 stored per user.
-- Access modes: card, card_or_pin, card_and_pin.
-- 0x84 record sends PIN as four bytes and mode bits; 0x87 read-back verifies UID, PIN and access mode.
-- Pseudo-TTY E2E: B112 / 12345, PIN 4321, card_or_pin -> addr=100, UID1=0xB112, UID2=12345, PIN=4321, mode=0x98: PASS.
-- API upload job completed success=1 failed=0: PASS.
-- Legacy 13-column users.csv UID1:UID2 import: PASS; automatically normalized with empty PIN and card-only mode.
-- Runtime CSV bootstrap/header and users.csv.example updated.
+v0.2.3 decimal card series correction:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- User form: compact card series input placed immediately before card number: PASS.
+- New card series validation: decimal digits only, range 0..65535: PASS.
+- New card number validation: decimal digits only, range 0..65535: PASS.
+- API save test: series 112 + number 12345 -> card=112:12345: PASS.
+- API rejection test: erroneous series B112 -> HTTP 400 with decimal-series validation error: PASS.
+- Erroneous HEX/alphabetic v0.2.2 card identifiers are not silently converted for new controller writes: PASS.
+- Pseudo-TTY controller E2E: series 112 / number 12345, PIN 4321, card_or_pin -> 0x84 UID1=112, UID2=12345, PIN=4321, mode=0x98; 0x87 read-back verification: PASS.
+- Embedded web cache revision updated to v=023: PASS.
+
+Hardware note:
+- Actual UNEX 721 hardware validation remains required before production bulk changes.

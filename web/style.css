@@ -15,3 +15,6 @@ nav button.skud-pressed,header button.skud-pressed{box-shadow:0 0 0 4px #60a5fa5
 
 /* v0.2.2 card series/number + PIN UI */
 .table-subtext{display:block;margin-top:4px;font-size:11px;color:#718096;white-space:nowrap}.pin-help{margin-top:14px;padding:10px 12px;border-radius:8px;background:#eff6ff;color:#1e3a5f;border:1px solid #bfdbfe}.pin-help b{color:#1d4ed8}
+
+/* v0.2.3: compact decimal card series + number input */
+.card-combined-field{display:block}.card-id-inputs{display:flex;align-items:flex-end;gap:8px;margin-top:5px}.card-id-inputs small{display:block;margin:0 0 3px;color:#718096;font-size:11px}.card-id-inputs input{margin-top:0}.card-series-input{flex:0 0 92px}.card-number-input{flex:1;min-width:0}@media(max-width:800px){.card-series-input{flex-basis:82px}}
