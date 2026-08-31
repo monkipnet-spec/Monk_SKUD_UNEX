@@ -14,6 +14,7 @@
 - отдельный справочник отделов в `config/departments.csv`: добавление, переименование и удаление через веб;
 - отдел пользователя выбирается из выпадающего списка; переименование отдела автоматически обновляет пользователей; используемый отдел удалить нельзя;
 - для каждого пользователя задаётся `controller_port` — порт записи в контроллере UNEX (0 = не задан);
+- мастер «Выгрузить в контроллеры»: все/выбранные пользователи → все/выбранные контроллеры, очередь задания и подробный результат по каждой паре пользователь/контроллер;
 - журнал событий по дням `data/events/YYYY-MM-DD.csv`;
 - текущее состояние карт `data/card_state.csv`;
 - список считанных карт `data/active_cards.csv`;
@@ -32,6 +33,8 @@
 Каркас стандартного кадра, polling 0x25/0x37 и RTC 0x23 реализован по опубликованному SOYAL protocol, совместимому по семейству с 721. Однако **точные смещения Card ID/User Address в реальном event-frame UNEX 721 не угадываются**. Пока не получен один реальный RAW-ответ UNEX 721 на нормальное считывание карты, драйвер сохраняет/показывает RAW frame и НЕ отправляет 0x37 для недекодированного события, чтобы не удалить проход из памяти контроллера.
 
 После первого захвата RAW кадра достаточно изменить `Unex721Protocol::decodeEvent()` — остальная система уже готова.
+
+Запись пользователей вынесена в `Unex721Protocol::writeUser()` и вызывается только через очередь `ControllerManager`. В v0.1.9 интерфейс и очередь были готовы, но аппаратная запись была заблокирована. Начиная с v0.2.0 реализован SOYAL H-series Extended Protocol по открытому MIT-проекту `oommgg/Soyal`: команда `0x84` записывает пользователя, затем `0x87` обязательно считывает запись обратно и сверяет UID. Это уменьшает риск ложного успеха при проблемах линии/протокола. Реальная совместимость именно с UNEX 721 всё равно должна быть подтверждена на одном тестовом пользователе до массовой выгрузки.
 
 ## Сборка Ubuntu 24.04/26.04
 
@@ -142,3 +145,27 @@ cd /opt/my-skud-runtime
 ## v0.1.7 — Визуальный отклик кнопок
 
 Все кнопки веб-интерфейса получили единый визуальный отклик на нажатие. При удержании кнопка слегка утапливается и затемняется, поверх неё появляется короткая световая волна. Добавлены hover-состояние, заметный keyboard focus и корректное disabled-состояние. Эффект работает для обычных, навигационных, опасных и динамически создаваемых кнопок без дополнительной разметки или JavaScript.
+
+
+## v0.1.8 — Гарантированный визуальный отклик
+
+CSS-состояние `:active` дополнено делегированным JavaScript-классом `skud-pressed`, который удерживается около 240 мс. Web-ресурсы получают версионные URL и отдаются с `Cache-Control: no-store`; встроенные web-файлы обновляются из бинарника при старте.
+
+## v0.1.9 — Выгрузка пользователей в контроллеры
+
+В разделе «Пользователи» добавлена кнопка **«Выгрузить в контроллеры»**. Диалог позволяет выбрать «все пользователи» или произвольный набор пользователей и «все контроллеры» или произвольный набор контроллеров. Сервер создаёт отдельное задание, возвращает `job_id`, показывает прогресс и результат по каждой паре пользователь/контроллер.
+
+HTTP API:
+
+- `POST /api/controllers/upload-users` — создаёт задание (`all_users`, `user_ids`, `all_controllers`, `controller_nodes`);
+- `GET /api/controllers/upload-users/status?job_id=N` — состояние и подробные результаты.
+
+Очередь находится внутри `ControllerManager`, поэтому HTTP-потоки не обращаются к последовательному порту напрямую и не конкурируют с polling контроллеров. Когда точный формат записи UNEX 721 будет подтверждён реальным захватом/документацией, достаточно реализовать `Unex721Protocol::writeUser()` и включить `userWriteSupported()` — UI/API/очередь менять не потребуется. До этого аппаратная запись возвращает состояние `blocked_protocol`.
+
+## SOYAL H-series Extended Protocol / user upload (v0.2.0)
+
+The UNEX driver now implements the card/user write layout used by the MIT-licensed `oommgg/Soyal` AR-727H library and its bundled SOYAL protocol reference. The write operation uses Extended Protocol command `0x84`, user address `1..16383`, a 27-byte user record, XOR+SUM checksums, and the `FF 00 5A A5` envelope. Every successful ACK is followed by command `0x87` to read the same address back and verify UID/status before the job reports success. Serial Extended Protocol responses are supported directly over RS485/USB-COM; legacy compact `0x7E` reads remain as a fallback for discovery/event experiments.
+
+Card input accepts either a single 32-bit decimal/`0xHEX` value or an exact `UID1:UID2` pair (each 0..65535). A single value up to 65535 is stored as `UID1` with `UID2=0`; larger values are split into high/low 16-bit words.
+
+Protocol reference/code source: https://github.com/oommgg/Soyal (MIT). Hardware verification on the actual UNEX 721 is still required before bulk production upload.

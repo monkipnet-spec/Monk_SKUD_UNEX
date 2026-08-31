@@ -13,6 +13,7 @@ document.addEventListener('pointerdown',e=>showButtonPress(e.target),true);
 document.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')showButtonPress(e.target)},true);
 
 let USERS=[];
+let CONTROLLERS=[];
 let DEPARTMENTS=[];
 let USERS_LOADED=false;
 
@@ -80,7 +81,71 @@ async function deleteDepartment(name){
 }
 
 async function loadCards(){await loadUsers();let a=await (await api('/api/cards/active')).json();cardsBody.innerHTML=a.map(x=>`<tr><td><b>${esc(x.card)}</b></td><td>${x.user_id||'—'}</td><td>${esc(x.user_name||'Не привязана')}</td><td>${esc(x.department||'')}</td><td>${esc(x.last_read)}</td><td>${esc(x.last_event)}</td><td>${x.user_id?`<button class="mini" onclick="editUser(${x.user_id})">Пользователь</button> <button class="mini danger" onclick="removeCard('${js(x.card)}')">Отвязать</button>`:`<button class="mini" onclick="openAssign('${js(x.card)}')">Добавить / привязать</button>`}</td></tr>`).join('');}
-async function loadControllers(){let a=await (await api('/api/controllers')).json();controllersBody.innerHTML=a.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td></tr>`).join('');}
+async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td></tr>`).join('');return CONTROLLERS;}
+
+function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);}
+function controllerDisplayName(c){return c.name||('Контроллер '+c.node);}
+
+async function openUserUpload(){
+    if(!USERS_LOADED)await loadUsers();
+    await loadControllers();
+    uploadAllUsers.checked=true;uploadAllControllers.checked=true;
+    uploadUsersList.innerHTML=USERS.length?USERS.map(u=>`<label class="check selection-item"><input type="checkbox" class="upload-user" value="${u.id}" checked> <span><b>${u.id} — ${esc(userDisplayName(u))}</b><small>${esc(u.department||'Без отдела')} · карта ${esc(u.card||'не задана')} · порт ${u.controller_port||'не задан'}</small></span></label>`).join(''):'<div class="muted">Пользователей нет</div>';
+    uploadControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="upload-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
+    uploadResult.innerHTML='';
+    toggleUploadSelection('users');toggleUploadSelection('controllers');updateUploadSummary();
+    uploadDialog.showModal();
+}
+
+function toggleUploadSelection(kind){
+    const all=kind==='users'?uploadAllUsers:uploadAllControllers;
+    const selector=kind==='users'?'.upload-user':'.upload-controller';
+    document.querySelectorAll(selector).forEach(x=>{x.disabled=all.checked;if(all.checked)x.checked=true;});
+    updateUploadSummary();
+}
+
+function selectedUploadValues(selector){return [...document.querySelectorAll(selector+':checked')].map(x=>Number(x.value)).filter(Boolean);}
+function updateUploadSummary(){
+    if(!window.uploadSelectionSummary)return;
+    const userCount=uploadAllUsers.checked?USERS.length:selectedUploadValues('.upload-user').length;
+    const controllerCount=uploadAllControllers.checked?CONTROLLERS.length:selectedUploadValues('.upload-controller').length;
+    uploadSelectionSummary.textContent=`Будет подготовлено записей: ${userCount} × ${controllerCount} = ${userCount*controllerCount}`;
+}
+document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.upload-user,.upload-controller'))updateUploadSummary();});
+
+function uploadStatusText(status){return ({ok:'Записан',skipped:'Пропущен',blocked_protocol:'Заблокировано',error:'Ошибка'})[status]||status;}
+function renderUserUploadJob(job){
+    const state=({queued:'В очереди',running:'Выполняется',completed:'Завершено',blocked:'Аппаратная запись заблокирована'})[job.state]||job.state;
+    const rows=(job.results||[]).map(r=>{const u=USERS.find(x=>x.id===r.user_id);const c=CONTROLLERS.find(x=>x.node===r.controller_node);const cls=r.status==='ok'?'ok':r.status==='skipped'?'muted':'bad';return `<tr><td>${r.user_id} — ${esc(u?userDisplayName(u):'')}</td><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td class="${cls}">${esc(uploadStatusText(r.status))}</td><td>${esc(r.message||'')}</td></tr>`;}).join('');
+    uploadResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · успешно ${job.success} · пропущено ${job.skipped} · ошибок/блокировок ${job.failed}</div>${rows?`<div class="upload-result-table"><table><thead><tr><th>Пользователь</th><th>Контроллер</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+}
+
+async function pollUserUpload(jobId){
+    for(let n=0;n<120;n++){
+        const r=await api('/api/controllers/upload-users/status?job_id='+encodeURIComponent(jobId));
+        if(!r.ok)return;
+        const job=await r.json();renderUserUploadJob(job);
+        if(job.state!=='queued'&&job.state!=='running')return;
+        await new Promise(resolve=>setTimeout(resolve,700));
+    }
+}
+
+async function startUserUpload(){
+    const userIds=selectedUploadValues('.upload-user');const nodes=selectedUploadValues('.upload-controller');
+    if(!uploadAllUsers.checked&&!userIds.length)return alert('Выберите хотя бы одного пользователя');
+    if(!uploadAllControllers.checked&&!nodes.length)return alert('Выберите хотя бы один контроллер');
+    if(uploadAllUsers.checked&&!USERS.length)return alert('Нет пользователей для выгрузки');
+    if(uploadAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
+    if(!confirm(`Выгрузить ${uploadAllUsers.checked?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?`))return;
+    startUploadButton.disabled=true;uploadResult.innerHTML='<div class="muted">Создание задания...</div>';
+    try{
+        const r=await api('/api/controllers/upload-users',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({all_users:uploadAllUsers.checked?'1':'0',user_ids:userIds.join(','),all_controllers:uploadAllControllers.checked?'1':'0',controller_nodes:nodes.join(',')})});
+        const j=await r.json();
+        if(!r.ok||!j.ok){uploadResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось создать задание')+'</div>';return;}
+        if(!j.protocol_ready)uploadResult.innerHTML='<div class="protocol-warning"><b>Аппаратная запись недоступна.</b><br>'+esc(j.protocol_message||'Протокол записи не готов')+'</div>';else uploadResult.innerHTML='<div class="upload-job-state"><b>SOYAL Extended Protocol активен.</b><br>'+esc(j.protocol_message||'')+'</div>';
+        await pollUserUpload(j.job_id);
+    }finally{startUploadButton.disabled=false;}
+}
 
 async function editUser(id=0){
     if(!USERS_LOADED)await loadUsers();

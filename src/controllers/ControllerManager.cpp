@@ -23,16 +23,74 @@ bool ControllerManager::renameController(int node,const std::string&name){{std::
 std::string ControllerManager::serialStatus()const{std::lock_guard lk(mu_);return serial_status_;}
 std::string ControllerManager::serialDevice()const{std::lock_guard lk(mu_);return serial_device_;}
 void ControllerManager::setRawEventCallback(RawEventFn fn){std::lock_guard lk(mu_);raw_cb_=std::move(fn);}
+
+bool ControllerManager::userUploadProtocolReady()const{return Unex721Protocol::userWriteSupported();}
+std::string ControllerManager::userUploadProtocolMessage()const{return Unex721Protocol::userWriteSupportMessage();}
+
+void ControllerManager::finishBlockedUserUpload(ControllerUserUploadJob&job,const std::vector<User>&users,const std::vector<int>&controller_nodes)const{
+    job.state="blocked";
+    for(const auto&u:users){
+        for(int node:controller_nodes){
+            ControllerUserUploadResult r;r.user_id=u.id;r.controller_node=node;
+            if(!u.enabled){r.status="skipped";r.message="Пользователь отключен";++job.skipped;}
+            else if(u.card.empty()){r.status="skipped";r.message="У пользователя не задан номер карты";++job.skipped;}
+            else if(u.controller_port<=0){r.status="skipped";r.message="Не задан порт/адрес пользователя в контроллере";++job.skipped;}
+            else{r.status="blocked_protocol";r.message=Unex721Protocol::userWriteSupportMessage();++job.failed;}
+            ++job.completed;job.results.push_back(std::move(r));
+        }
+    }
+}
+
+std::uint64_t ControllerManager::queueUserUpload(std::vector<User>users,std::vector<int>controller_nodes){
+    std::lock_guard lk(upload_mu_);
+    const auto id=next_upload_id_++;
+    ControllerUserUploadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";
+    job.total=static_cast<int>(users.size()*controller_nodes.size());
+    if(!Unex721Protocol::userWriteSupported()){
+        finishBlockedUserUpload(job,users,controller_nodes);
+    }else{
+        upload_queue_.push_back(PendingUserUpload{id,std::move(users),std::move(controller_nodes)});
+    }
+    upload_jobs_[id]=std::move(job);
+    while(upload_jobs_.size()>20)upload_jobs_.erase(upload_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerUserUploadJob> ControllerManager::userUploadJob(std::uint64_t id)const{
+    std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(id);if(it==upload_jobs_.end())return std::nullopt;return it->second;
+}
+
+void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
+    PendingUserUpload pending;
+    {
+        std::lock_guard lk(upload_mu_);
+        if(upload_queue_.empty())return;
+        pending=std::move(upload_queue_.front());upload_queue_.pop_front();
+        auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="running";
+    }
+    for(const auto&u:pending.users){
+        for(int node:pending.controller_nodes){
+            if(!running_)return;
+            auto out=proto.writeUser(static_cast<std::uint8_t>(node),u);
+            ControllerUserUploadResult r{u.id,node,out.status,out.message};
+            std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it==upload_jobs_.end())continue;
+            auto&job=it->second;++job.completed;
+            if(out.ok)++job.success;else if(out.status=="skipped")++job.skipped;else ++job.failed;
+            job.results.push_back(std::move(r));
+        }
+    }
+    std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="completed";
+}
 void ControllerManager::loop(){
     using namespace std::chrono_literals; SerialPort port; std::map<int,std::chrono::steady_clock::time_point> last_sync;
     while(running_){
-        if(!cfg_.getBool("serial.enabled",true)){std::lock_guard lk(mu_);serial_status_="DISABLED";std::this_thread::sleep_for(1s);continue;}
+        if(!cfg_.getBool("serial.enabled",true)){{std::lock_guard lk(mu_);serial_status_="DISABLED";}std::this_thread::sleep_for(1s);continue;}
         if(!port.isOpen()){
             auto dev=cfg_.get("serial.device","auto");if(dev=="auto")dev=SerialPort::autoDetect();
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){

@@ -13,5 +13,27 @@ void SerialPort::closePort(){if(fd_>=0)::close(fd_);fd_=-1;device_.clear();}
 bool SerialPort::writeAll(const std::vector<std::uint8_t>&d){if(fd_<0)return false;size_t off=0;while(off<d.size()){auto n=::write(fd_,d.data()+off,d.size()-off);if(n<0)return false;off+=(size_t)n;}tcdrain(fd_);return true;}
 bool SerialPort::readExact(std::uint8_t*b,std::size_t n,int timeout_ms){size_t off=0;while(off<n){pollfd p{fd_,POLLIN,0};int r=poll(&p,1,timeout_ms);if(r<=0)return false;auto k=::read(fd_,b+off,n-off);if(k<=0)return false;off+=(size_t)k;}return true;}
 std::vector<std::uint8_t> SerialPort::readFrame(int timeout_ms){std::vector<std::uint8_t>r;if(fd_<0)return r;std::uint8_t b=0;for(int i=0;i<64;i++){if(!readExact(&b,1,timeout_ms))return{};if(b==0x7E)break;if(i==63)return{};}std::uint8_t len=0;if(!readExact(&len,1,timeout_ms))return{};r={0x7E,len};if(len==0||len>250)return{};std::vector<std::uint8_t>tail(len);if(!readExact(tail.data(),tail.size(),timeout_ms))return{};r.insert(r.end(),tail.begin(),tail.end());return r;}
+std::vector<std::uint8_t> SerialPort::readExtendedFrame(int timeout_ms){
+    std::vector<std::uint8_t> r;
+    if(fd_<0)return r;
+    const std::uint8_t magic[4]={0xFF,0x00,0x5A,0xA5};
+    std::size_t matched=0;
+    for(int i=0;i<256&&matched<4;++i){
+        std::uint8_t b=0;
+        if(!readExact(&b,1,timeout_ms))return{};
+        if(b==magic[matched]){++matched;}
+        else{matched=(b==magic[0])?1:0;}
+    }
+    if(matched!=4)return{};
+    std::uint8_t lenbuf[2]{};
+    if(!readExact(lenbuf,2,timeout_ms))return{};
+    const std::size_t len=(static_cast<std::size_t>(lenbuf[0])<<8)|lenbuf[1];
+    if(len<4||len>1018)return{};
+    r={magic[0],magic[1],magic[2],magic[3],lenbuf[0],lenbuf[1]};
+    std::vector<std::uint8_t> tail(len);
+    if(!readExact(tail.data(),tail.size(),timeout_ms))return{};
+    r.insert(r.end(),tail.begin(),tail.end());
+    return r;
+}
 std::string SerialPort::autoDetect(){std::error_code ec;std::filesystem::path byid("/dev/serial/by-id");if(std::filesystem::exists(byid,ec))for(auto&e:std::filesystem::directory_iterator(byid,ec))return e.path().string();for(auto s:{"/dev/ttyUSB0","/dev/ttyUSB1","/dev/ttyACM0","/dev/ttyACM1"})if(std::filesystem::exists(s,ec))return s;return{};}
 }

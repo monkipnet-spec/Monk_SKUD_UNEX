@@ -68,6 +68,26 @@ struct AttendanceEvent {
     std::string raw_hex;
 };
 
+
+struct ControllerUserUploadResult {
+    int user_id{};
+    int controller_node{};
+    std::string status;
+    std::string message;
+};
+
+struct ControllerUserUploadJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed, blocked
+    int total{};
+    int completed{};
+    int success{};
+    int failed{};
+    int skipped{};
+    std::vector<ControllerUserUploadResult> results;
+};
+
 struct RawUnexEvent {
     int node{};
     std::vector<std::uint8_t> frame;

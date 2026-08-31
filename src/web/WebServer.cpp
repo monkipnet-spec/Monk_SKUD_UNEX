@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -21,6 +22,7 @@ bool WebServer::start(){if(running_)return true;server_fd_=::socket(AF_INET,SOCK
 void WebServer::stop(){running_=false;if(server_fd_>=0){shutdown(server_fd_,SHUT_RDWR);::close(server_fd_);server_fd_=-1;}if(thread_.joinable())thread_.join();}
 void WebServer::loop(){while(running_){int c=accept(server_fd_,nullptr,nullptr);if(c<0){if(!running_)break;continue;}std::thread(&WebServer::handleClient,this,c).detach();}}
 static std::string lower(std::string s){for(char&c:s)c=std::tolower((unsigned char)c);return s;}
+static std::vector<int> parseIntList(const std::string&s){std::vector<int> out;for(auto&part:util::split(s,',')){try{int v=std::stoi(util::trim(part));if(v>0&&std::find(out.begin(),out.end(),v)==out.end())out.push_back(v);}catch(...){}}return out;}
 void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.find("\r\n\r\n")==std::string::npos&&data.size()<65536){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0){close(fd);return;}data.append(buf,n);}auto hp=data.find("\r\n\r\n");std::string head=data.substr(0,hp),body=data.substr(hp+4);std::istringstream hs(head);std::string line;Req r;if(!std::getline(hs,line)){close(fd);return;}if(!line.empty()&&line.back()=='\r')line.pop_back();std::istringstream l1(line);std::string target,ver;l1>>r.method>>target>>ver;auto q=target.find('?');r.path=q==std::string::npos?target:target.substr(0,q);r.query=q==std::string::npos?"":target.substr(q+1);while(std::getline(hs,line)){if(!line.empty()&&line.back()=='\r')line.pop_back();auto p=line.find(':');if(p!=std::string::npos)r.headers[lower(util::trim(line.substr(0,p)))]=util::trim(line.substr(p+1));}size_t cl=0;try{cl=std::stoul(r.headers["content-length"]);}catch(...){}while(body.size()<cl){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0)break;body.append(buf,n);}r.body=body.substr(0,cl);auto res=route(r);std::ostringstream out;std::string reason=res.code==200?"OK":res.code==302?"Found":res.code==401?"Unauthorized":res.code==404?"Not Found":"Bad Request";out<<"HTTP/1.1 "<<res.code<<' '<<reason<<"\r\nContent-Type: "<<res.type<<"\r\nContent-Length: "<<res.body.size()<<"\r\nConnection: close\r\n";for(auto&h:res.headers)out<<h.first<<": "<<h.second<<"\r\n";out<<"\r\n"<<res.body;auto s=out.str();send(fd,s.data(),s.size(),MSG_NOSIGNAL);close(fd);}
 std::string WebServer::cookie(const Req&r,const std::string&name)const{auto it=r.headers.find("cookie");if(it==r.headers.end())return{};for(auto&p:util::split(it->second,';')){auto x=p.find('=');if(x!=std::string::npos&&util::trim(p.substr(0,x))==name)return util::trim(p.substr(x+1));}return{};}
 bool WebServer::authorized(const Req&r)const{auto sid=cookie(r,"SKUDSID");if(sid.empty())return false;std::lock_guard lk(sessions_mu_);return sessions_.count(sid)>0;}
@@ -46,6 +48,11 @@ WebServer::Res WebServer::jsonTodayAttendance(){
     return{200,"application/json; charset=utf-8",o.str()};
 }
 WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonUserUploadJob(const ControllerUserUploadJob&job){
+    std::ostringstream o;o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"success\":"<<job.success<<",\"failed\":"<<job.failed<<",\"skipped\":"<<job.skipped<<",\"results\":[";
+    bool first=true;for(const auto&r:job.results){if(!first)o<<',';first=false;o<<"{\"user_id\":"<<r.user_id<<",\"controller_node\":"<<r.controller_node<<",\"status\":\""<<util::jsonEscape(r.status)<<"\",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";}o<<"]}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/login"&&r.method=="POST"){auto f=util::parseForm(r.body);auto salt=cfg_.get("auth.salt");auto hash=util::sha256Hex(salt+f["password"]);if(f["username"]==cfg_.get("auth.username","admin")&&util::constantTimeEqual(hash,cfg_.get("auth.password_hash"))){auto sid=util::randomToken();{std::lock_guard lk(sessions_mu_);sessions_[sid]=f["username"];}Res x{200,"application/json","{\"ok\":true}"};x.headers.push_back({"Set-Cookie","SKUDSID="+sid+"; Path=/; HttpOnly; SameSite=Strict"});return x;}return{401,"application/json","{\"ok\":false}"};}
@@ -62,7 +69,24 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/cards/active")return jsonCards();
     if(r.path=="/api/attendance/today"&&r.method=="GET")return jsonTodayAttendance();
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
-    if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>255)u.controller_port=255;if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
+    if(r.path=="/api/controllers/upload-users"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);std::vector<User> selected_users;std::vector<int> selected_nodes;
+        const auto all_users=f["all_users"]=="1";const auto all_controllers=f["all_controllers"]=="1";
+        auto allu=users_.list();
+        if(all_users)selected_users=allu;else{auto ids=parseIntList(f["user_ids"]);for(int id:ids){auto u=users_.byId(id);if(u)selected_users.push_back(*u);}}
+        auto allc=controllers_.controllers();
+        if(all_controllers){for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);}else{auto nodes=parseIntList(f["controller_nodes"]);for(int node:nodes){auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});if(it!=allc.end())selected_nodes.push_back(node);}}
+        if(selected_users.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no users selected\"}"};
+        if(selected_nodes.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
+        auto id=controllers_.queueUserUpload(std::move(selected_users),std::move(selected_nodes));
+        std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"protocol_ready\":"<<(controllers_.userUploadProtocolReady()?"true":"false")<<",\"protocol_message\":\""<<util::jsonEscape(controllers_.userUploadProtocolMessage())<<"\"}";
+        return{200,"application/json",o.str()};
+    }
+    if(r.path=="/api/controllers/upload-users/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.userUploadJob(id);if(!job)return{404,"application/json","{\"error\":\"upload job not found\"}"};return jsonUserUploadJob(*job);
+    }
+    if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>16383)u.controller_port=16383;if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
     if(r.path=="/api/users/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.erase(std::stoi(f["id"]));}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/departments/save"&&r.method=="POST"){
         auto f=util::parseForm(r.body);
