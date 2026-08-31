@@ -4,13 +4,16 @@
 
 ## Что уже реализовано
 
-- модульный C++20: `serial`, `unex`, `controllers`, `attendance`, `users`, `storage`, `telegram`, `web`, `config`;
+- модульный C++20: `serial`, `unex`, `controllers`, `attendance`, `users`, `departments`, `storage`, `telegram`, `web`, `config`;
 - USB-COM autodetect (`/dev/serial/by-id`, `/dev/ttyUSB*`, `/dev/ttyACM*`), 9600 8N1;
 - polling UNEX/SOYAL-style протокола: 0x25 (старейшее событие), безопасное подтверждение 0x37 только после декодирования;
 - синхронизация времени контроллера 0x23;
 - автообнаружение Node ID и сохранение контроллеров в `config/controllers.csv`;
 - файловое хранение без БД;
 - пользователи и карты в `config/users.csv`;
+- отдельный справочник отделов в `config/departments.csv`: добавление, переименование и удаление через веб;
+- отдел пользователя выбирается из выпадающего списка; переименование отдела автоматически обновляет пользователей; используемый отдел удалить нельзя;
+- для каждого пользователя задаётся `controller_port` — порт записи в контроллере UNEX (0 = не задан);
 - журнал событий по дням `data/events/YYYY-MM-DD.csv`;
 - текущее состояние карт `data/card_state.csv`;
 - список считанных карт `data/active_cards.csv`;
@@ -61,7 +64,7 @@ sudo systemctl status monk-skud-unex
 `config/users.csv`:
 
 ```text
-id;enabled;last_name;first_name;middle_name;department;position;card;valid_from;valid_until;telegram_arrival;telegram_departure
+id;enabled;last_name;first_name;middle_name;department;position;card;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure
 ```
 
 `config/controllers.csv`:
@@ -69,6 +72,17 @@ id;enabled;last_name;first_name;middle_name;department;position;card;valid_from;
 ```text
 node;name;model;enabled
 ```
+
+`config/departments.csv`:
+
+```text
+name
+Склад
+IT
+Производство
+```
+
+При первом старте существующие названия отделов из `users.csv` автоматически добавляются в справочник.
 
 ## Telegram
 
@@ -82,3 +96,11 @@ Repository: `https://github.com/monkipnet-spec/Monk_SKUD_UNEX.git`
 ## v0.1.1 — Web UI path fix
 
 The executable now auto-detects the project root when started from the source root, `build/`, or `/opt/Monk_SKUD_UNEX`. CMake also copies `web/` into `build/web/`, so `/login.html` remains available when the binary is started directly from the build directory.
+
+## User controller port
+
+Each user has `controller_port` (0-255, `0` means not specified). The value is stored in `config/users.csv`, exposed by the web API/UI, and is reserved for the UNEX 721 user-download module. Old 12-column users CSV files remain import-compatible and are migrated with `controller_port=0`.
+
+## v0.1.3 — Departments
+
+Добавлен отдельный модуль `DepartmentManager`. В веб-интерфейсе появился раздел «Отделы» с добавлением, переименованием и удалением. В карточке пользователя отдел выбирается из выпадающего списка. Переименование отдела обновляет пользователей, удаление отдела блокируется, пока он назначен хотя бы одному пользователю. Старые отделы из `users.csv` автоматически мигрируют в `config/departments.csv`.

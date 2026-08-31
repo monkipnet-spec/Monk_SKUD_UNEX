@@ -1,6 +1,8 @@
 Build verification: SUCCESS
-Version: 0.1.1
+Version: 0.1.3
 CMake target: monk-skud-unex
 C++ standard: C++20
-Web path regression test: SUCCESS. Binary started from build/ without explicit root; /login.html returned HTTP 200 and / returned HTTP 302 -> /login.html.
-Functional smoke test from v0.1.0: login OK; user creation OK; first card read = arrival; immediate second read = accidental; active-card list OK.
+Web path regression test: retained from v0.1.1.
+Functional smoke test: department API add OK; department rename OK; assigned users renamed automatically; deleting department in use is blocked; clearing user department then deleting department OK; department web section is served.
+Legacy migration: user department names are ensured into config/departments.csv at application initialization.
+v0.1.2 compatibility: per-user controller_port retained; legacy users.csv compatibility retained.

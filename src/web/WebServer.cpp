@@ -2,6 +2,7 @@
 #include "skud/AttendanceEngine.h"
 #include "skud/Config.h"
 #include "skud/ControllerManager.h"
+#include "skud/DepartmentManager.h"
 #include "skud/TelegramNotifier.h"
 #include "skud/UserManager.h"
 #include "skud/Util.h"
@@ -14,7 +15,7 @@
 #include <sstream>
 
 namespace skud {
-WebServer::WebServer(Config&c,UserManager&u,AttendanceEngine&a,ControllerManager&cm,TelegramNotifier&t,std::string root):cfg_(c),users_(u),attendance_(a),controllers_(cm),telegram_(t),root_(std::move(root)){}
+WebServer::WebServer(Config&c,UserManager&u,DepartmentManager&d,AttendanceEngine&a,ControllerManager&cm,TelegramNotifier&t,std::string root):cfg_(c),users_(u),departments_(d),attendance_(a),controllers_(cm),telegram_(t),root_(std::move(root)){}
 WebServer::~WebServer(){stop();}
 bool WebServer::start(){if(running_)return true;server_fd_=::socket(AF_INET,SOCK_STREAM,0);if(server_fd_<0)return false;int one=1;setsockopt(server_fd_,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons(cfg_.getInt("server.port",8080));if(bind(server_fd_,(sockaddr*)&addr,sizeof(addr))<0||listen(server_fd_,32)<0){::close(server_fd_);server_fd_=-1;return false;}running_=true;thread_=std::thread(&WebServer::loop,this);return true;}
 void WebServer::stop(){running_=false;if(server_fd_>=0){shutdown(server_fd_,SHUT_RDWR);::close(server_fd_);server_fd_=-1;}if(thread_.joinable())thread_.join();}
@@ -24,7 +25,8 @@ void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.
 std::string WebServer::cookie(const Req&r,const std::string&name)const{auto it=r.headers.find("cookie");if(it==r.headers.end())return{};for(auto&p:util::split(it->second,';')){auto x=p.find('=');if(x!=std::string::npos&&util::trim(p.substr(0,x))==name)return util::trim(p.substr(x+1));}return{};}
 bool WebServer::authorized(const Req&r)const{auto sid=cookie(r,"SKUDSID");if(sid.empty())return false;std::lock_guard lk(sessions_mu_);return sessions_.count(sid)>0;}
 WebServer::Res WebServer::file(const std::string&name,const std::string&type){const auto path=std::filesystem::path(root_)/"web"/name;std::ifstream f(path,std::ios::binary);if(!f){return{404,"text/plain; charset=utf-8","UI file not found: "+path.string()};}std::ostringstream o;o<<f.rdbuf();return{200,type,o.str()};}
-WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"controller_port\":"<<u.controller_port<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonDepartments(){auto v=departments_.list();std::ostringstream o;o<<"[";bool first=true;for(const auto&name:v){if(!first)o<<',';first=false;o<<"\""<<util::jsonEscape(name)<<"\"";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonCards(){auto v=attendance_.activities();std::ostringstream o;o<<"[";bool first=true;for(auto&a:v){if(!first)o<<',';first=false;o<<"{\"card\":\""<<util::jsonEscape(a.card)<<"\",\"user_id\":"<<a.user_id<<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\",\"department\":\""<<util::jsonEscape(a.department)<<"\",\"last_read\":\""<<a.last_read<<"\",\"last_event\":\""<<util::jsonEscape(a.last_event)<<"\",\"controller_node\":"<<a.controller_node<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<"}";return{200,"application/json; charset=utf-8",o.str()};}
@@ -37,16 +39,39 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/")return file("index.html","text/html; charset=utf-8");
     if(!authorized(r))return{401,"application/json","{\"error\":\"auth required\"}"};
     if(r.path=="/api/logout"){auto sid=cookie(r,"SKUDSID");{std::lock_guard lk(sessions_mu_);sessions_.erase(sid);}Res x{200,"application/json","{}"};x.headers.push_back({"Set-Cookie","SKUDSID=; Path=/; Max-Age=0"});return x;}
-    if(r.path=="/api/status")return jsonStatus(); if(r.path=="/api/users"&&r.method=="GET")return jsonUsers(); if(r.path=="/api/cards/active")return jsonCards(); if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
-    if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
+    if(r.path=="/api/status")return jsonStatus();
+    if(r.path=="/api/users"&&r.method=="GET")return jsonUsers();
+    if(r.path=="/api/departments"&&r.method=="GET")return jsonDepartments();
+    if(r.path=="/api/cards/active")return jsonCards();
+    if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
+    if(r.path=="/api/users/save"&&r.method=="POST"){auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];u.card=f["card"];try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>255)u.controller_port=255;if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};}
     if(r.path=="/api/users/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.erase(std::stoi(f["id"]));}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
+    if(r.path=="/api/departments/save"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);
+        auto old_name=util::trim(f["old_name"]),name=util::trim(f["name"]);
+        if(name.empty())return{400,"application/json","{\"ok\":false,\"error\":\"empty department\"}"};
+        bool ok=false;
+        if(old_name.empty())ok=departments_.add(name);
+        else if(old_name==name)ok=true;
+        else{
+            ok=departments_.rename(old_name,name);
+            if(ok){users_.renameDepartment(old_name,name);attendance_.refreshUserMetadata();}
+        }
+        return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"department already exists or was not found\"}"};
+    }
+    if(r.path=="/api/departments/delete"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);auto name=util::trim(f["name"]);
+        if(users_.departmentInUse(name))return{200,"application/json","{\"ok\":false,\"error\":\"department is used by users\"}"};
+        bool ok=departments_.erase(name);
+        return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"department not found\"}"};
+    }
     if(r.path=="/api/cards/assign"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.assignCard(std::stoi(f["user_id"]),f["card"]);}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/cards/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=users_.removeCard(f["card"]);attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/controllers/name"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=controllers_.renameController(std::stoi(f["node"]),f["name"]);}catch(...){}return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/simulate"&&r.method=="POST"){auto f=util::parseForm(r.body);auto e=attendance_.onCardRead(f["card"],0,"Симулятор");std::string t=e.type==AttendanceEventType::Arrival?"arrival":e.type==AttendanceEventType::Departure?"departure":e.type==AttendanceEventType::Accidental?"accidental":"unknown";return{200,"application/json","{\"ok\":true,\"event\":\""+t+"\"}"};}
     if(r.path=="/api/telegram/test"&&r.method=="POST"){std::string err;bool ok=telegram_.sendTest(err);return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
     if(r.path=="/api/export/users"){Res x{200,"text/csv; charset=utf-8",users_.exportCsv()};x.headers.push_back({"Content-Disposition","attachment; filename=users.csv"});return x;}
-    if(r.path=="/api/import/users"&&r.method=="POST"){std::string err;bool ok=users_.importCsv(r.body,err);attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
+    if(r.path=="/api/import/users"&&r.method=="POST"){std::string err;bool ok=users_.importCsv(r.body,err);if(ok)departments_.ensure(users_.usedDepartments());attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
     if(r.path=="/api/export/settings"){Res x{200,"text/plain; charset=utf-8",cfg_.raw()};x.headers.push_back({"Content-Disposition","attachment; filename=system.conf"});return x;}
     if(r.path=="/api/import/settings"&&r.method=="POST"){bool ok=cfg_.replaceRaw(r.body);return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/settings/save"&&r.method=="POST"){auto f=util::parseForm(r.body);if(!f["username"].empty())cfg_.set("auth.username",f["username"]);if(!f["password"].empty()){auto salt=util::randomToken(16);cfg_.set("auth.salt",salt);cfg_.set("auth.password_hash",util::sha256Hex(salt+f["password"]));}if(!f["port"].empty())cfg_.set("server.port",f["port"]);if(!f["serial_device"].empty())cfg_.set("serial.device",f["serial_device"]);cfg_.set("telegram.enabled",f["telegram_enabled"]=="1"?"true":"false");cfg_.set("telegram.bot_token",f["bot_token"]);cfg_.set("telegram.chat_id",f["chat_id"]);cfg_.save();return{200,"application/json","{\"ok\":true,\"restart_required\":true}"};}

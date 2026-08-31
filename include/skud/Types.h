@@ -18,6 +18,7 @@ struct User {
     std::string department;
     std::string position;
     std::string card;
+    int controller_port{}; // UNEX controller port assigned to this user; 0 = not specified
     std::string valid_from;
     std::string valid_until;
     bool telegram_arrival{true};

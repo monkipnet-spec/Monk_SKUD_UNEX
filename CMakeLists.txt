@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.1.1 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.1.3 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -12,6 +12,7 @@ add_executable(monk-skud-unex
   src/utils/Util.cpp
   src/storage/FileStore.cpp
   src/users/UserManager.cpp
+  src/departments/DepartmentManager.cpp
   src/attendance/AttendanceEngine.cpp
   src/serial/SerialPort.cpp
   src/unex/Unex721Protocol.cpp

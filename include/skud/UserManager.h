@@ -18,6 +18,9 @@ public:
     bool erase(int id);
     bool assignCard(int id,const std::string&card);
     bool removeCard(const std::string&card);
+    bool renameDepartment(const std::string& old_name,const std::string& new_name);
+    bool departmentInUse(const std::string& name) const;
+    std::vector<std::string> usedDepartments() const;
     std::string exportCsv() const;
     bool importCsv(const std::string& csv, std::string& error);
 private:
