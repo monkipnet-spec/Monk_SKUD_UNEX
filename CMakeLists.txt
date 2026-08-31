@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.1.0 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.1.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -22,4 +22,8 @@ add_executable(monk-skud-unex
 target_include_directories(monk-skud-unex PRIVATE include)
 target_link_libraries(monk-skud-unex PRIVATE OpenSSL::Crypto Threads::Threads)
 target_compile_options(monk-skud-unex PRIVATE -Wall -Wextra -Wpedantic)
+
+# Keep the web UI next to the binary as well as in the source tree.
+# This lets the application serve static files even when started from build/.
+file(COPY "${CMAKE_SOURCE_DIR}/web" DESTINATION "${CMAKE_BINARY_DIR}")
 install(TARGETS monk-skud-unex RUNTIME DESTINATION bin)

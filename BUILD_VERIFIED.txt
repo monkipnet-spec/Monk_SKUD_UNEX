@@ -1,4 +1,6 @@
 Build verification: SUCCESS
+Version: 0.1.1
 CMake target: monk-skud-unex
 C++ standard: C++20
-Functional smoke test: login OK; user creation OK; first card read = arrival; immediate second read = accidental; active-card list OK.
+Web path regression test: SUCCESS. Binary started from build/ without explicit root; /login.html returned HTTP 200 and / returned HTTP 302 -> /login.html.
+Functional smoke test from v0.1.0: login OK; user creation OK; first card read = arrival; immediate second read = accidental; active-card list OK.

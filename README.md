@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Monk_SKUD_UNEX
 
 Модульная система контроля доступа на C++20 для Ubuntu Server 24.04/26.04 и контроллеров UNEX 721 через USB-COM/RS-485.
@@ -78,7 +77,8 @@ node;name;model;enabled
 ## GitHub
 
 Repository: `https://github.com/monkipnet-spec/Monk_SKUD_UNEX.git`
-=======
-# SCUD_UNEX
-Система условного доступа
->>>>>>> 3283678a3929ba99ed18e30afaba884d310e8eed
+
+
+## v0.1.1 — Web UI path fix
+
+The executable now auto-detects the project root when started from the source root, `build/`, or `/opt/Monk_SKUD_UNEX`. CMake also copies `web/` into `build/web/`, so `/login.html` remains available when the binary is started directly from the build directory.
