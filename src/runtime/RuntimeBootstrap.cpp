@@ -44,6 +44,21 @@ bool writeIfMissing(const fs::path& path, const char* data, std::size_t size, st
 bool writeTextIfMissing(const fs::path& path, std::string_view text, std::string& error) {
     return writeIfMissing(path, text.data(), text.size(), error);
 }
+
+bool writeOrRefresh(const fs::path& path, const char* data, std::size_t size, std::string& error) {
+    if (!makeDir(path.parent_path(), error)) return false;
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        error = "cannot refresh file " + path.string();
+        return false;
+    }
+    f.write(data, static_cast<std::streamsize>(size));
+    if (!f) {
+        error = "cannot refresh file " + path.string();
+        return false;
+    }
+    return true;
+}
 }
 
 bool ensureRuntimeLayout(const std::string& root, std::string& error) {
@@ -71,14 +86,15 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
 
     // The complete UI is embedded in the executable. This makes a copied
     // binary self-contained: an empty working directory becomes runnable on
-    // first start without separately copying web/.
-    if (!writeIfMissing(base / "web" / "login.html",
+    // first start without separately copying web/. Web assets are refreshed on
+    // every start so an upgraded binary cannot keep an old cached/runtime UI.
+    if (!writeOrRefresh(base / "web" / "login.html",
             reinterpret_cast<const char*>(embedded::login_html), embedded::login_html_size, error)) return false;
-    if (!writeIfMissing(base / "web" / "index.html",
+    if (!writeOrRefresh(base / "web" / "index.html",
             reinterpret_cast<const char*>(embedded::index_html), embedded::index_html_size, error)) return false;
-    if (!writeIfMissing(base / "web" / "app.js",
+    if (!writeOrRefresh(base / "web" / "app.js",
             reinterpret_cast<const char*>(embedded::app_js), embedded::app_js_size, error)) return false;
-    if (!writeIfMissing(base / "web" / "style.css",
+    if (!writeOrRefresh(base / "web" / "style.css",
             reinterpret_cast<const char*>(embedded::style_css), embedded::style_css_size, error)) return false;
 
     return true;

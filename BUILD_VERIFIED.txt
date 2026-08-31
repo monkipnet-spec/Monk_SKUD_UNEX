@@ -1,5 +1,5 @@
 Build verification: SUCCESS
-Version: 0.1.7
+Version: 0.1.8
 CMake target: monk-skud-unex
 C++ standard: C++20
 
@@ -45,3 +45,17 @@ v0.1.7 button press visualization
 - Radial highlight expands while pressed.
 - Hover, keyboard focus-visible and disabled states are included.
 - CSS-only implementation works for dynamically created buttons and login page.
+
+
+v0.1.8 guaranteed button feedback
+- JS delegated pointer/keyboard handler applies skud-pressed for 240 ms.
+- Works for dynamically generated buttons and .button links.
+- Login page has the same press feedback.
+- style.css/app.js use versioned URLs to break stale browser cache.
+- WebServer sends Cache-Control: no-store and Pragma: no-cache for UI files.
+- RuntimeBootstrap refreshes embedded web assets on every start; config/data files remain preserved.
+- Release build: PASS ([100%] Built target monk-skud-unex).
+- Runtime web refresh test: stale style.css replaced by embedded v0.1.8 asset: PASS.
+- app.js refreshed and delegated press handler present: PASS.
+- HTTP style.css response contains Cache-Control no-store and Pragma no-cache: PASS.
+- Existing config/users.csv remained byte-for-byte unchanged across restart: PASS.

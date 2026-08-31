@@ -1,3 +1,17 @@
+
+// Guaranteed visual feedback for every current and future button/link styled as a button.
+function showButtonPress(target){
+    const b=target&&target.closest?target.closest('button,.button'):null;
+    if(!b||b.disabled||b.classList.contains('disabled'))return;
+    clearTimeout(b._skudPressTimer);
+    b.classList.remove('skud-pressed');
+    void b.offsetWidth;
+    b.classList.add('skud-pressed');
+    b._skudPressTimer=setTimeout(()=>b.classList.remove('skud-pressed'),240);
+}
+document.addEventListener('pointerdown',e=>showButtonPress(e.target),true);
+document.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')showButtonPress(e.target)},true);
+
 let USERS=[];
 let DEPARTMENTS=[];
 let USERS_LOADED=false;
