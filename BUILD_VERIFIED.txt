@@ -1,5 +1,5 @@
 Build verification: SUCCESS
-Version: 0.1.5
+Version: 0.1.7
 CMake target: monk-skud-unex
 C++ standard: C++20
 
@@ -37,3 +37,11 @@ v0.1.6 runtime bootstrap verification
 - Created runtime CSV/config files: PASS
 - Embedded web files byte-for-byte equal to source web assets: PASS
 - Existing runtime files are preserved: PASS
+
+
+v0.1.7 button press visualization
+- All button/.button controls use a visible pressed state.
+- Press: translate/scale + brightness reduction + inset shadow.
+- Radial highlight expands while pressed.
+- Hover, keyboard focus-visible and disabled states are included.
+- CSS-only implementation works for dynamically created buttons and login page.
