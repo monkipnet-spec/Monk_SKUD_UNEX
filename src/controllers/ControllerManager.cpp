@@ -177,7 +177,9 @@ std::uint64_t ControllerManager::queueUserUpload(std::vector<User>users,std::vec
     std::lock_guard lk(upload_mu_);
     const auto id=next_upload_id_++;
     ControllerUserUploadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.full_sync=full_sync;
-    job.total=static_cast<int>(users.size()*controller_nodes.size()+(full_sync?controller_nodes.size():0));
+    job.total=full_sync
+        ? static_cast<int>(1024*controller_nodes.size())
+        : static_cast<int>(users.size()*controller_nodes.size());
     if(!Unex721Protocol::userWriteSupported()){
         finishBlockedUserUpload(job,users,controller_nodes);
     }else{
@@ -468,33 +470,45 @@ void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
         pending=std::move(upload_queue_.front());upload_queue_.pop_front();
         auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="running";
     }
-    auto append_result=[this,&pending](ControllerUserUploadResult r,bool ok,bool skipped=false){
+    auto append_result=[this,&pending](ControllerUserUploadResult r,bool ok,bool skipped=false,bool keep=true){
         std::lock_guard lk(upload_mu_);
         auto it=upload_jobs_.find(pending.id);if(it==upload_jobs_.end())return;
         auto&job=it->second;++job.completed;
-        if(ok)++job.success;else if(skipped)++job.skipped;else ++job.failed;
-        job.results.push_back(std::move(r));
+        if(ok&&!skipped)++job.success;else if(skipped)++job.skipped;else ++job.failed;
+        if(keep)job.results.push_back(std::move(r));
     };
 
     if(pending.full_sync){
-        // Full synchronization is intentionally controller-centric: clear one
-        // controller first, then immediately rebuild it from the selected local
-        // user set before moving to the next controller.  This guarantees that
-        // stale/duplicate slots (for example an old card at address 1023) cannot
-        // survive a successful full sync.
+        // Verified full synchronization for real UNEX 721 hardware.
+        // Do NOT rely on 85H: the tested controller can ACK 85H while stale
+        // user slots still remain active.  Instead reconcile every official
+        // H-series address 0..1023.  Addresses absent from the local active
+        // dataset are zeroed with 83H and verified by 87H; desired addresses
+        // are written with writeUser(), which also performs 87H verification.
+        std::map<int,const User*> desired;
+        for(const auto&u:pending.users)desired[u.controller_port]=&u;
+
         for(int node:pending.controller_nodes){
             if(!running_)return;
-            auto clear=proto.clearAllUsers(static_cast<std::uint8_t>(node));
-            append_result(ControllerUserUploadResult{0,node,clear.status,clear.message},clear.ok);
-            if(!clear.ok){
-                for(const auto&u:pending.users){
-                    append_result(ControllerUserUploadResult{u.id,node,"skipped_clear_failed","83H не отправлен: полная очистка 85H этого контроллера не подтверждена"},false,true);
-                }
-                continue;
+            const auto n=static_cast<std::uint8_t>(node);
+
+            // Phase 1: remove every slot that is not part of this full export.
+            for(int address=0;address<=1023;++address){
+                if(desired.count(address))continue;
+                if(!running_)return;
+                auto out=proto.clearUserSlot(n,address);
+                const bool already_empty=out.status=="slot_already_empty";
+                append_result(
+                    ControllerUserUploadResult{0,node,out.status,out.message},
+                    out.ok,
+                    already_empty,
+                    !already_empty || !out.ok);
             }
+
+            // Phase 2: write only the desired local users into their exact slots.
             for(const auto&u:pending.users){
                 if(!running_)return;
-                auto out=proto.writeUser(static_cast<std::uint8_t>(node),u);
+                auto out=proto.writeUser(n,u);
                 append_result(ControllerUserUploadResult{u.id,node,out.status,out.message},out.ok,out.status=="skipped");
             }
         }

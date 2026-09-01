@@ -243,6 +243,47 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::clearAllUsers(std::uint8_t no
     return{true,"cleared_all","Все пользовательские ячейки очищены командой 85H; далее будут записаны только пользователи полной выгрузки"};
 }
 
+Unex721Protocol::UserWriteOutcome Unex721Protocol::clearUserSlot(std::uint8_t node,int address){
+    if(address<0||address>1023)
+        return{false,"clear_slot_invalid","Для AR-721H/727H допустимый User Address 0..1023"};
+
+    // Deterministic full-sync cleanup.  Do not rely on 85H: read the slot,
+    // and if any bytes remain, overwrite the complete official 8-byte 83H
+    // record with zeros (Site/Card/PIN/Mode/Zone) and verify exact zeros via 87H.
+    auto before=readUser(node,address);
+    if(!before.ok)
+        return{false,"clear_slot_read_failed","Не удалось прочитать User Address "+std::to_string(address)+" через 87H: "+before.message};
+    if(before.raw_record.size()!=8)
+        return{false,"clear_slot_unsupported","Ожидалась официальная 8B запись 87H, получено "+std::to_string(before.raw_record.size())+"B: "+before.raw_record_hex};
+
+    const std::vector<std::uint8_t> zeros(8,0x00);
+    if(before.raw_record==zeros)
+        return{true,"slot_already_empty","User Address "+std::to_string(address)+" уже пуст"};
+
+    const auto a=static_cast<std::uint16_t>(address);
+    std::vector<std::uint8_t> payload={
+        static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF)
+    };
+    payload.insert(payload.end(),zeros.begin(),zeros.end());
+
+    auto ack=transact(node,0x83,payload,500);
+    if(!ack)return{false,"clear_slot_timeout","Нет ответа на 83H при очистке User Address "+std::to_string(address)};
+    if(ack->size()<6)return{false,"clear_slot_error","Короткий ответ на 83H: "+util::hex(*ack)};
+    if((*ack)[3]==NACK)return{false,"clear_slot_nack","Контроллер вернул NACK на 83H при очистке User Address "+std::to_string(address)+": "+util::hex(*ack)};
+    if((*ack)[3]!=ACK)return{false,"clear_slot_error","Неожиданный ответ 83H при очистке User Address "+std::to_string(address)+": "+util::hex(*ack)};
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    auto after=readUser(node,address);
+    if(!after.ok||after.raw_record.size()!=8)
+        return{false,"clear_slot_verify_failed","83H ACK получен, но контрольный 87H после очистки не удался для User Address "+std::to_string(address)};
+    if(after.raw_record!=zeros)
+        return{false,"clear_slot_verify_failed","83H ACK получен, но User Address "+std::to_string(address)+" не очищен. Ожидалось 00 00 00 00 00 00 00 00, получено="+after.raw_record_hex};
+
+    std::ostringstream m;
+    m<<"User Address "<<address<<" очищен 83H и подтверждён 87H; было RAW="<<before.raw_record_hex;
+    return{true,"slot_cleared_verified",m.str()};
+}
+
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
     const int address=user.controller_port;
     if(address<0||address>1023)
