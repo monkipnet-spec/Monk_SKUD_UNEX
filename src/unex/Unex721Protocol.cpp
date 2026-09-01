@@ -142,8 +142,8 @@ bool Unex721Protocol::setSystemTime(std::uint8_t node){
     return transact(node,0x23,d,150).has_value();
 }
 
-bool Unex721Protocol::userWriteSupported(){return true;}
-std::string Unex721Protocol::userWriteSupportMessage(){return "SOYAL H-series Extended Protocol: 0x84 запись карты/PIN, 0x87 контрольное чтение; адрес пользователя 1..16383";}
+bool Unex721Protocol::userWriteSupported(){return false;}
+std::string Unex721Protocol::userWriteSupportMessage(){return "UNEX 721 подтверждён как compact H-series: чтение 0x87 работает стандартным 0x7E с 8-байтной записью; аппаратная запись временно заблокирована до подтверждения точного H-series формата записи/PIN";}
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,const User& user){
     if(!user.enabled)return{false,"skipped","Пользователь отключен"};
@@ -202,53 +202,10 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,c
 }
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
-    if(user.controller_port<=0||user.controller_port>16383)
-        return{false,"error","Порт/адрес пользователя должен быть 1..16383"};
-    const auto address=static_cast<std::uint16_t>(user.controller_port);
-
-    // Exact-slot deletion: use H-series Set Card (0x84) for one address,
-    // UID1/UID2 = 0xFFFF and mode=0. This mirrors disableCard() in the
-    // protocol reference and avoids the range semantics of command 0x85.
-    const std::vector<std::uint8_t> data={
-        1,
-        static_cast<std::uint8_t>((address>>8)&0xFF),static_cast<std::uint8_t>(address&0xFF),
-        0,0,0,0,
-        0xFF,0xFF,
-        0xFF,0xFF,
-        0,0,0,0,
-        0x00,
-        0x00,
-        0xFF,0xFF,
-        99,12,31,
-        0x00,
-        0,0,0,0
-    };
-    auto r=transactExtended(node,0x84,data,350);
-    if(!r)return{false,"error","Нет корректного ответа Extended Protocol на удаление пользователя (0x84)"};
-    if(r->size()<8)return{false,"error","Короткий ответ контроллера при удалении пользователя"};
-    const auto code=(*r)[7];
-    if(code==NACK)return{false,"error","Контроллер вернул NACK при удалении пользователя"};
-    if(code!=ACK){
-        std::ostringstream m;m<<"Неожиданный код ответа 0x"<<std::hex<<std::uppercase<<static_cast<int>(code);
-        return{false,"error",m.str()};
-    }
-
-    auto verify=readUser(node,address);
-    if(!verify.ok)return{false,"error","Контроллер подтвердил удаление, но контрольное чтение 0x87 не удалось: "+verify.message};
-
-    const std::uint16_t got1=verify.uid1;
-    const std::uint16_t got2=verify.uid2;
-    const bool enabled=verify.enabled;
-    if(verify.present&&(enabled||got1!=0xFFFF||got2!=0xFFFF)){
-        std::ostringstream m;
-        m<<"Удаление не подтверждено: адрес "<<address<<", UID "<<util::formatCardId(got1,got2)
-         <<", active="<<(enabled?"1":"0");
-        return{false,"error",m.str()};
-    }
-    std::ostringstream m;m<<"Удалён и проверен: адрес "<<address;
-    return{true,"ok",m.str()};
+    (void)node;
+    (void)user;
+    return{false,"blocked_protocol","Удаление из контроллера временно заблокировано: фактический UNEX 721 использует compact H-series 8-byte user record; точный формат безопасной записи ещё уточняется"};
 }
-
 
 Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int address){
     UserReadOutcome out;
@@ -262,32 +219,33 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
         static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF),0x01
     };
 
-    // The official H-series 87H description explicitly permits both the
-    // standard 0x7E frame and the FF 00 5A A5 extended frame.  Direct RS485
-    // readers are commonly happiest with the standard frame, whereas TCP/IP
-    // bridges/libraries often use Extended Protocol.  Try both, read-only.
     std::optional<std::vector<std::uint8_t>> r;
     bool standard=false;
     std::string standard_diag="таймаут/нет кадра";
     std::string extended_diag="таймаут/нет кадра";
 
     if(auto sr=transact(node,0x87,read_data,250)){
-        // Standard response: 7E LEN 00 03 SOURCE [24-byte user record] XOR SUM.
-        if(sr->size()<20)standard_diag="короткий кадр";
-        else if((*sr)[3]==NACK)standard_diag="NACK";
-        else if((*sr)[3]!=0x03){
-            std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*sr)[3]);standard_diag=d.str();
+        // Real UNEX 721 capture (2026-09-01) returns a standard Data Echo:
+        // 7E 0D 00 03 SID [8-byte compact H-series record] XOR SUM.
+        // Enterprise controllers may return a longer 24-byte record.
+        if(sr->size()<7){
+            standard_diag="слишком короткий кадр RAW="+util::hex(*sr);
+        }else if((*sr)[3]==NACK){
+            standard_diag="NACK RAW="+util::hex(*sr);
+        }else if((*sr)[3]!=0x03){
+            std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*sr)[3])<<" RAW="<<util::hex(*sr);standard_diag=d.str();
         }else{
             r=std::move(sr);standard=true;standard_diag="OK";
         }
     }
     if(!r){
         if(auto er=transactExtended(node,0x87,read_data,350)){
-            // Extended response: FF 00 5A A5 LEN_H LEN_L 00 03 SOURCE [record] XOR SUM.
-            if(er->size()<24)extended_diag="короткий кадр";
-            else if((*er)[7]==NACK)extended_diag="NACK";
-            else if((*er)[7]!=0x03){
-                std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*er)[7]);extended_diag=d.str();
+            if(er->size()<11){
+                extended_diag="слишком короткий кадр RAW="+util::hex(*er);
+            }else if((*er)[7]==NACK){
+                extended_diag="NACK RAW="+util::hex(*er);
+            }else if((*er)[7]!=0x03){
+                std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*er)[7])<<" RAW="<<util::hex(*er);extended_diag=d.str();
             }else{
                 r=std::move(er);standard=false;extended_diag="OK";
             }
@@ -298,41 +256,84 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
         return out;
     }
 
-    // Both response formats contain the same 24-byte user-parameter record;
-    // only the header before that record differs by four bytes.
-    const std::size_t uid1_hi=standard?9:13;
-    const std::size_t uid1_lo=uid1_hi+1;
-    const std::size_t uid2_hi=uid1_hi+2;
-    const std::size_t uid2_lo=uid1_hi+3;
-    const std::size_t pin0=uid1_hi+4;
-    const std::size_t mode_i=uid1_hi+8;
-    if(r->size()<=mode_i+2){
-        out.message=standard?"Короткий стандартный ответ контроллера на 0x87":"Короткий Extended-ответ контроллера на 0x87";
+    const std::size_t data_begin=standard?5:9; // after Node=00, Function=03, Source ID
+    if(r->size()<data_begin+2){
+        out.message="Ответ 0x87 не содержит пользовательских данных RAW="+util::hex(*r);
+        return out;
+    }
+    const std::size_t data_end=r->size()-2; // XOR/SUM
+    if(data_end<data_begin){
+        out.message="Некорректная длина ответа 0x87 RAW="+util::hex(*r);
+        return out;
+    }
+    const std::size_t data_len=data_end-data_begin;
+    std::vector<std::uint8_t> record(r->begin()+static_cast<std::ptrdiff_t>(data_begin),r->begin()+static_cast<std::ptrdiff_t>(data_end));
+    out.raw_record_hex=util::hex(record);
+
+    if(data_len==8){
+        // Compact Home-series/UNEX record observed on the real UNEX 721.
+        // The first four bytes map cleanly to the documented H-series
+        // decimal Site Code / Card Code pair (two big-endian 16-bit words).
+        // The remaining four bytes are deliberately kept raw until the
+        // exact UNEX PIN/access-mode layout is confirmed on known test data.
+        out.uid1=(static_cast<std::uint16_t>(record[0])<<8)|record[1];
+        out.uid2=(static_cast<std::uint16_t>(record[2])<<8)|record[3];
+        const bool all_zero=std::all_of(record.begin(),record.end(),[](std::uint8_t b){return b==0x00;});
+        const bool uid_ff=out.uid1==0xFFFF&&out.uid2==0xFFFF;
+        out.present=!all_zero&&!uid_ff;
+        out.enabled=out.present;
+        out.pin=0;
+        out.mode=0;
+        out.access_mode.clear();
+        out.details_known=false;
+        out.ok=true;
+        std::ostringstream m;
+        if(out.present){
+            m<<"Адрес "<<address<<": карта "<<util::formatCardSeries(out.uid1)<<" / "<<out.uid2
+             <<" [H/UNEX compact 8B; PIN/режим пока не декодированы; RAW="<<out.raw_record_hex<<"]";
+        }else{
+            m<<"Адрес "<<address<<" пуст [H/UNEX compact 8B; RAW="<<out.raw_record_hex<<"]";
+        }
+        out.message=m.str();
         return out;
     }
 
-    out.uid1=(static_cast<std::uint16_t>((*r)[uid1_hi])<<8)|(*r)[uid1_lo];
-    out.uid2=(static_cast<std::uint16_t>((*r)[uid2_hi])<<8)|(*r)[uid2_lo];
-    out.pin=(static_cast<std::uint32_t>((*r)[pin0])<<24)|
-            (static_cast<std::uint32_t>((*r)[pin0+1])<<16)|
-            (static_cast<std::uint32_t>((*r)[pin0+2])<<8)|(*r)[pin0+3];
-    out.mode=(*r)[mode_i];
-    out.enabled=out.mode>0;
-    out.present=!(out.mode==0&&out.uid1==0xFFFF&&out.uid2==0xFFFF);
-    out.access_mode=accessModeFromByte(out.mode);
-    out.ok=true;
+    // Enterprise-style 24-byte user record.  The user record starts with
+    // four bytes before UID1, matching the public AR-727H/E-series library.
+    if(data_len>=24){
+        const std::size_t uid1_hi=data_begin+4;
+        const std::size_t pin0=uid1_hi+4;
+        const std::size_t mode_i=uid1_hi+8;
+        if(mode_i>=data_end){
+            out.message="Неполная 24-байтная запись 0x87 RAW="+util::hex(*r);
+            return out;
+        }
+        out.uid1=(static_cast<std::uint16_t>((*r)[uid1_hi])<<8)|(*r)[uid1_hi+1];
+        out.uid2=(static_cast<std::uint16_t>((*r)[uid1_hi+2])<<8)|(*r)[uid1_hi+3];
+        out.pin=(static_cast<std::uint32_t>((*r)[pin0])<<24)|
+                (static_cast<std::uint32_t>((*r)[pin0+1])<<16)|
+                (static_cast<std::uint32_t>((*r)[pin0+2])<<8)|(*r)[pin0+3];
+        out.mode=(*r)[mode_i];
+        out.enabled=out.mode>0;
+        out.present=!(out.mode==0&&out.uid1==0xFFFF&&out.uid2==0xFFFF);
+        out.access_mode=accessModeFromByte(out.mode);
+        out.details_known=true;
+        out.ok=true;
+        std::ostringstream m;
+        if(!out.present)m<<"Адрес "<<address<<" пуст";
+        else m<<"Адрес "<<address<<": карта "<<util::formatCardSeries(out.uid1)<<" / "<<out.uid2
+              <<", "<<(out.enabled?"активен":"отключен")<<", PIN "<<(out.pin?"задан":"нет");
+        m<<" ["<<(standard?"0x7E":"Extended")<<", 24B]";
+        out.message=m.str();
+        return out;
+    }
 
     std::ostringstream m;
-    if(!out.present)m<<"Адрес "<<address<<" пуст";
-    else{
-        m<<"Адрес "<<address<<": карта "<<util::formatCardSeries(out.uid1)<<" / "<<out.uid2
-         <<", "<<(out.enabled?"активен":"отключен")
-         <<", PIN "<<(out.pin?"задан":"нет");
-    }
-    m<<" ["<<(standard?"0x7E":"Extended")<<"]";
+    m<<"Неизвестный формат пользовательской записи 0x87: "<<data_len<<" байт, RAW="<<out.raw_record_hex;
     out.message=m.str();
     return out;
 }
+
 
 RawUnexEvent Unex721Protocol::decodeEvent(std::uint8_t node,const std::vector<std::uint8_t>&f)const{
     RawUnexEvent e;e.node=node;e.frame=f;e.raw_hex=util::hex(f);for(std::size_t i=2;i+2<f.size();++i)if(f[i]==0x0B){e.event_code=0x0B;break;}return e;

@@ -22,6 +22,8 @@ public:
         std::uint32_t pin{};
         std::uint8_t mode{};
         std::string access_mode;
+        bool details_known{true}; // false for compact H/UNEX 8-byte records where PIN/mode layout is not yet confirmed
+        std::string raw_record_hex;
         std::string message;
     };
 

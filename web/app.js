@@ -145,8 +145,11 @@ function renderUserReadJob(job){
     const rows=(job.results||[]).map(r=>{
         const c=CONTROLLERS.find(x=>x.node===r.controller_node);
         const cls=r.status==='match'?'ok':r.status==='empty'?'muted':'bad';
+        const detailLine=r.details_known===false
+            ?`H/UNEX compact 8B · PIN/режим не декодированы${r.raw_record_hex?' · RAW '+esc(r.raw_record_hex):''}`
+            :`${r.controller_enabled?'Активен':'Отключен'} · ${r.pin_set?'PIN задан':'PIN нет'} · ${esc(accessModeText(r.access_mode))}`;
         const ctrlData=r.controller_card
-            ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${r.controller_enabled?'Активен':'Отключен'} · ${r.pin_set?'PIN задан':'PIN нет'} · ${esc(accessModeText(r.access_mode))}</small>`
+            ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${detailLine}</small>`
             :'—';
         const local=r.local_user_id?`${r.local_user_id} — ${esc(r.local_user_name||'')}`:'—';
         return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td></tr>`;

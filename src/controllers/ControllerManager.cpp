@@ -190,6 +190,8 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
             result.controller_enabled=got.enabled;
             result.pin_set=got.pin!=0;
             result.access_mode=got.access_mode;
+            result.details_known=got.details_known;
+            result.raw_record_hex=got.raw_record_hex;
             if(!local){
                 result.status="unknown";
                 result.message="Запись есть в контроллере, но в системе нет пользователя с таким адресом";
@@ -197,20 +199,22 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
                 std::uint16_t expect1=0,expect2=0;
                 std::string err;
                 const bool card_ok=util::parseCardId(local->card,expect1,expect2,&err)&&expect1==got.uid1&&expect2==got.uid2;
-                const bool enabled_ok=local->enabled==got.enabled;
-                const bool pin_ok=localPinValue(*local)==got.pin;
-                const bool mode_ok=(local->access_mode.empty()?"card":local->access_mode)==got.access_mode;
+                const bool enabled_ok=!got.details_known||local->enabled==got.enabled;
+                const bool pin_ok=!got.details_known||localPinValue(*local)==got.pin;
+                const bool mode_ok=!got.details_known||(local->access_mode.empty()?"card":local->access_mode)==got.access_mode;
                 if(card_ok&&enabled_ok&&pin_ok&&mode_ok){
                     result.status="match";
-                    result.message="Запись контроллера полностью совпадает с системой";
+                    result.message=got.details_known?"Запись контроллера полностью совпадает с системой":
+                        "Карта совпадает; компактный H/UNEX ответ не сравнивает PIN/режим. "+got.message;
                 }else{
                     result.status="diff";
                     std::ostringstream m;
                     m<<"Отличия:";
                     if(!card_ok)m<<" карта";
-                    if(!enabled_ok)m<<" активность";
-                    if(!pin_ok)m<<" PIN";
-                    if(!mode_ok)m<<" режим";
+                    if(got.details_known&&!enabled_ok)m<<" активность";
+                    if(got.details_known&&!pin_ok)m<<" PIN";
+                    if(got.details_known&&!mode_ok)m<<" режим";
+                    if(!got.details_known)m<<"; PIN/режим не сравнивались. "<<got.message;
                     result.message=m.str();
                 }
             }

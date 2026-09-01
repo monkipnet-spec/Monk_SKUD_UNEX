@@ -105,6 +105,8 @@ WebServer::Res WebServer::jsonUserReadJob(const ControllerUserReadJob&job){
          <<",\"controller_enabled\":"<<(r.controller_enabled?"true":"false")
          <<",\"pin_set\":"<<(r.pin_set?"true":"false")
          <<",\"access_mode\":\""<<util::jsonEscape(r.access_mode)<<"\""
+         <<",\"details_known\":"<<(r.details_known?"true":"false")
+         <<",\"raw_record_hex\":\""<<util::jsonEscape(r.raw_record_hex)<<"\""
          <<",\"status\":\""<<util::jsonEscape(r.status)<<"\""
          <<",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";
     }

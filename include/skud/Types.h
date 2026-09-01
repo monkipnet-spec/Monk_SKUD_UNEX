@@ -124,6 +124,8 @@ struct ControllerUserReadResult {
     bool controller_enabled{false};
     bool pin_set{false};
     std::string access_mode;
+    bool details_known{true};
+    std::string raw_record_hex;
     std::string status; // match, diff, missing, unknown, empty, error
     std::string message;
 };

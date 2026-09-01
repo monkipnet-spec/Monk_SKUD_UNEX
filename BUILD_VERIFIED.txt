@@ -48,3 +48,9 @@ v0.2.7 RS485 87H compatibility:
 - Standard 0x7E request/response readback test: PASS.
 - Extended Protocol readback fallback test: PASS.
 - Local TX echo ignored before real controller response: PASS.
+
+
+v0.2.8 real UNEX 721 compact 87H:
+- accepts valid standard response 7E 0D 00 03 SID + 8 data bytes + XOR/SUM
+- exposes compact raw record and compares card without guessing PIN/mode
+- preserves 24-byte Enterprise parser
