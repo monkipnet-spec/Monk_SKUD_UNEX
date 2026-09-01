@@ -13,3 +13,12 @@ H-series user address range: 0..1023 (Address 0 is valid).
 83H Set User Data: enabled with mandatory 87H exact read-back verification.
 Full synchronization: explicit opt-in only. It no longer relies on 85H; all addresses 0..1023 absent from the desired active dataset are invalidated/cleared with 83H and verified by 87H, then desired users are written and verified.
 Upload dialog default: “Все пользователи” OFF and every individual user checkbox OFF.
+
+
+v0.3.17 checks:
+- Release build: PASS
+- 12H official Function 02H parser: added; Function 03H compatibility retained
+- Real frame fixture: 7E 06 00 02 02 A5 5A 03 -> EEPROM byte A5: PASS
+- PTY protocol test: 12H A5 -> 20H write 85 -> ACK -> 12H 85 read-back: PASS
+- Exact generated 20H frame for node 2: 7E 08 02 20 00 16 01 85 4F 0D
+- Pass Any Cards target transition at EEPROM 0016: A5 -> 85

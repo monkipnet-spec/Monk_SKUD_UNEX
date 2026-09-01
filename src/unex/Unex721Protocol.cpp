@@ -484,12 +484,16 @@ Unex721Protocol::EepromReadOutcome Unex721Protocol::readEeprom(std::uint8_t node
     if(r->size()<6){out.message="Короткий ответ на 12H: "+out.raw_frame_hex;return out;}
     const auto code=(*r)[3];
     if(code==NACK){out.message="Контроллер вернул NACK на 12H: "+out.raw_frame_hex;return out;}
-    if(code!=0x03){
+    // AR-721H/727H Protocol v1.2 documents Function=02H for a 12H Read EEPROM
+    // reply: 7E LEN 00 02 ReaderID <data...> XOR SUM. Older compatible
+    // implementations have also been seen using generic Data Echo 03H, so accept
+    // both without weakening checksum/length validation.
+    if(code!=0x02 && code!=0x03){
         std::ostringstream m;m<<"Неожиданный ответ 12H code=0x"<<std::hex<<std::uppercase<<static_cast<int>(code)<<": "<<out.raw_frame_hex;
         out.message=m.str();return out;
     }
-    // Standard SOYAL Data Echo observed on the real UNEX 721:
-    // 7E LEN 00 03 SOURCE <data...> XOR SUM.
+    // Standard SOYAL response:
+    // 7E LEN 00 02/03 SOURCE <data...> XOR SUM.
     if(r->size()<7){out.message="Короткий Data Echo на 12H: "+out.raw_frame_hex;return out;}
     const std::size_t data_begin=5;
     const std::size_t data_end=r->size()-2;

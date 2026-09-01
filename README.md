@@ -499,3 +499,11 @@ v0.3.11 therefore enables upload through the confirmed standard `0x7E` transport
 5. `87H` read-back must return the exact expected 8 bytes; otherwise the operation is reported as failed.
 
 Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=Card or PIN`, `3=Card + PIN`. The manual's generic data-structure page contains a conflicting 2/3 comment, so the actual command definition is used. Existing valid time-zone byte is preserved; an empty/new slot defaults to zone 1.
+
+
+## v0.3.17 — official 12H EEPROM response parsing
+
+- Fixed H-series `12H Read EEPROM` parsing: the official AR-721H/727H reply uses Function `02H` (`7E LEN 00 02 ReaderID DATA... XOR SUM`).
+- Compatibility with generic `03H` data-echo replies is retained.
+- This unblocks the full-sync safety step that reads EEPROM `0x0016`, clears the `0x20` Pass Any Cards bit, writes it through `20H`, and verifies it with `12H`.
+- Real UNEX capture used for the fix: `7E 06 00 02 02 A5 5A 03`, therefore the current `0x0016` value is `0xA5` and the expected disabled value is `0x85`.
