@@ -12,6 +12,13 @@ public:
         std::string status;
         std::string message;
     };
+    struct EepromReadOutcome {
+        bool ok{false};
+        int address{};
+        std::vector<std::uint8_t> data;
+        std::string raw_frame_hex;
+        std::string message;
+    };
     struct UserReadOutcome {
         bool ok{false};
         bool present{false};
@@ -22,7 +29,8 @@ public:
         std::uint32_t pin{};
         std::uint8_t mode{};
         std::string access_mode;
-        bool details_known{true}; // false for compact H/UNEX 8-byte records where PIN/mode layout is not yet confirmed
+        bool card_known{true}; // false for real compact H/UNEX 8-byte records: captured bytes are not direct series:number
+        bool details_known{true}; // false when PIN/mode layout is not confirmed
         std::string raw_record_hex;
         std::string message;
     };
@@ -47,6 +55,7 @@ public:
     UserWriteOutcome writeUser(std::uint8_t node,const User& user);
     UserWriteOutcome deleteUser(std::uint8_t node,const User& user);
     UserReadOutcome readUser(std::uint8_t node,int address);
+    EepromReadOutcome readEeprom(std::uint8_t node,int address,int length);
 
 private:
     std::optional<std::vector<std::uint8_t>> transact(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout_ms=120);

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 
@@ -23,6 +24,44 @@ std::string userFullName(const User& u){
 std::uint32_t localPinValue(const User& u){
     if(u.pin_code.empty())return 0;
     try{return static_cast<std::uint32_t>(std::stoul(u.pin_code));}catch(...){return 0;}
+}
+struct EepromPattern { std::string name; std::vector<std::uint8_t> bytes; bool exact{true}; };
+std::vector<std::uint8_t> bcdDigits(std::string digits){
+    if(digits.size()%2)digits="0"+digits;
+    std::vector<std::uint8_t> out;out.reserve(digits.size()/2);
+    for(std::size_t i=0;i<digits.size();i+=2)out.push_back(static_cast<std::uint8_t>((digits[i]-'0')*16+(digits[i+1]-'0')));
+    return out;
+}
+std::vector<EepromPattern> eepromPatterns(int series,int number){
+    std::vector<EepromPattern> p;
+    auto add=[&](std::string n,std::vector<std::uint8_t> b,bool exact=true){
+        if(b.empty())return;
+        for(const auto&x:p)if(x.bytes==b&&x.exact==exact)return;
+        p.push_back({std::move(n),std::move(b),exact});
+    };
+    const auto sh=static_cast<std::uint8_t>((series>>8)&0xFF),sl=static_cast<std::uint8_t>(series&0xFF);
+    const auto nh=static_cast<std::uint8_t>((number>>8)&0xFF),nl=static_cast<std::uint8_t>(number&0xFF);
+    add("S16+N16 BE",{sh,sl,nh,nl});
+    add("S16+N16 LE",{sl,sh,nl,nh});
+    if(series<=255){add("S8+N16 BE",{sl,nh,nl});add("S8+N16 LE",{sl,nl,nh});}
+    const auto dec32=static_cast<std::uint64_t>(series)*100000ULL+static_cast<std::uint64_t>(number);
+    if(dec32<=0xFFFFFFFFULL){
+        const auto v=static_cast<std::uint32_t>(dec32);
+        add("DEC(series*100000+number) BE",{static_cast<std::uint8_t>(v>>24),static_cast<std::uint8_t>(v>>16),static_cast<std::uint8_t>(v>>8),static_cast<std::uint8_t>(v)});
+        add("DEC(series*100000+number) LE",{static_cast<std::uint8_t>(v),static_cast<std::uint8_t>(v>>8),static_cast<std::uint8_t>(v>>16),static_cast<std::uint8_t>(v>>24)});
+    }
+    std::ostringstream s3,n5,s5;s3<<std::setw(3)<<std::setfill('0')<<series;n5<<std::setw(5)<<std::setfill('0')<<number;s5<<std::setw(5)<<std::setfill('0')<<series;
+    add("BCD 3+5",bcdDigits(s3.str()+n5.str()));
+    add("BCD 5+5",bcdDigits(s5.str()+n5.str()));
+    const auto ascii=std::to_string(series)+":"+std::to_string(number);
+    add("ASCII series:number",std::vector<std::uint8_t>(ascii.begin(),ascii.end()));
+    add("N16 BE (частичное)",{nh,nl},false);
+    add("N16 LE (частичное)",{nl,nh},false);
+    return p;
+}
+std::string hexSlice(const std::vector<std::uint8_t>& data,std::size_t begin,std::size_t end){
+    if(begin>=end||begin>=data.size())return{};end=std::min(end,data.size());
+    return util::hex(std::vector<std::uint8_t>(data.begin()+static_cast<std::ptrdiff_t>(begin),data.begin()+static_cast<std::ptrdiff_t>(end)));
 }
 }
 ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){}
@@ -126,6 +165,76 @@ std::optional<ControllerUserReadJob> ControllerManager::userReadJob(std::uint64_
     return it->second;
 }
 
+std::uint64_t ControllerManager::queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size){
+    std::lock_guard lk(eeprom_mu_);
+    const auto id=next_eeprom_id_++;
+    ControllerEepromSearchJob job;job.id=id;job.created_at=util::nowLocal();job.card_series=card_series;job.card_number=card_number;
+    job.start_address=start_address;job.end_address=end_address;job.block_size=block_size;
+    const int blocks=(end_address-start_address+block_size)/block_size;
+    job.total=static_cast<int>(controller_nodes.size())*blocks;
+    job.state=(controller_nodes.empty()||start_address>end_address)?"completed":"queued";
+    eeprom_jobs_[id]=job;
+    if(job.state=="queued"){
+        PendingEepromSearch p;p.id=id;p.card_series=card_series;p.card_number=card_number;p.controller_nodes=std::move(controller_nodes);
+        p.start_address=start_address;p.end_address=end_address;p.block_size=block_size;p.next_address=start_address;eeprom_queue_.push_back(std::move(p));
+    }
+    while(eeprom_jobs_.size()>12)eeprom_jobs_.erase(eeprom_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerEepromSearchJob> ControllerManager::eepromSearchJob(std::uint64_t id)const{
+    std::lock_guard lk(eeprom_mu_);auto it=eeprom_jobs_.find(id);if(it==eeprom_jobs_.end())return std::nullopt;return it->second;
+}
+
+void ControllerManager::processEepromSearchBatch(Unex721Protocol& proto){
+    constexpr int batch_size=4;
+    constexpr std::size_t max_results=500;
+    for(int batch=0;batch<batch_size&&running_;++batch){
+        std::uint64_t job_id=0;int node=0,start=0,end=0,block_size=64,series=0,number=0;bool last_task=false;
+        {
+            std::lock_guard lk(eeprom_mu_);
+            if(eeprom_queue_.empty())return;
+            auto& p=eeprom_queue_.front();auto it=eeprom_jobs_.find(p.id);
+            if(it==eeprom_jobs_.end()){eeprom_queue_.pop_front();continue;}
+            it->second.state="running";
+            if(p.controller_index>=p.controller_nodes.size()){it->second.state="completed";eeprom_queue_.pop_front();continue;}
+            job_id=p.id;node=p.controller_nodes[p.controller_index];start=p.next_address;end=p.end_address;block_size=p.block_size;series=p.card_series;number=p.card_number;
+            p.next_address+=block_size;
+            if(p.next_address>end){++p.controller_index;p.next_address=p.start_address;}
+            last_task=p.controller_index>=p.controller_nodes.size();
+        }
+        const int core_len=std::min(block_size,end-start+1);
+        const int read_len=std::min(core_len+12,0x10000-start); // overlap catches patterns crossing a block boundary and gives context
+        auto got=proto.readEeprom(static_cast<std::uint8_t>(node),start,read_len);
+        std::vector<ControllerEepromSearchMatch> found;
+        ControllerEepromSearchError error;
+        if(got.ok){
+            const auto patterns=eepromPatterns(series,number);
+            for(const auto& pat:patterns){
+                if(pat.bytes.empty()||got.data.size()<pat.bytes.size())continue;
+                for(std::size_t pos=0;pos+pat.bytes.size()<=got.data.size();++pos){
+                    if(static_cast<int>(pos)>=core_len)break;
+                    if(!std::equal(pat.bytes.begin(),pat.bytes.end(),got.data.begin()+static_cast<std::ptrdiff_t>(pos)))continue;
+                    ControllerEepromSearchMatch m;m.controller_node=node;m.eeprom_address=start+static_cast<int>(pos);m.pattern=pat.name;m.exact=pat.exact;
+                    m.matched_hex=util::hex(pat.bytes);
+                    const auto cb=pos>8?pos-8:0;const auto ce=std::min(got.data.size(),pos+pat.bytes.size()+8);m.context_hex=hexSlice(got.data,cb,ce);found.push_back(std::move(m));
+                }
+            }
+        }else{error.controller_node=node;error.eeprom_address=start;error.message=got.message;}
+        {
+            std::lock_guard lk(eeprom_mu_);auto it=eeprom_jobs_.find(job_id);
+            if(it!=eeprom_jobs_.end()){
+                auto& job=it->second;++job.completed;
+                if(!got.ok){++job.failed;if(job.errors.size()<50)job.errors.push_back(std::move(error));}
+                for(auto&m:found){if(job.matches.size()<max_results)job.matches.push_back(std::move(m));else job.truncated=true;}
+                if(last_task)job.state="completed";
+            }
+            if(last_task&&!eeprom_queue_.empty()&&eeprom_queue_.front().id==job_id)eeprom_queue_.pop_front();
+        }
+        if(last_task)return;
+    }
+}
+
 void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
     constexpr int batch_size=6;
     for(int batch=0;batch<batch_size&&running_;++batch){
@@ -186,7 +295,8 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
                 keep_result=include_empty;
             }
         }else{
-            result.controller_card=util::formatCardId(got.uid1,got.uid2);
+            result.card_known=got.card_known;
+            if(got.card_known)result.controller_card=util::formatCardId(got.uid1,got.uid2);
             result.controller_enabled=got.enabled;
             result.pin_set=got.pin!=0;
             result.access_mode=got.access_mode;
@@ -195,6 +305,9 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
             if(!local){
                 result.status="unknown";
                 result.message="Запись есть в контроллере, но в системе нет пользователя с таким адресом";
+            }else if(!got.card_known){
+                result.status="unverified";
+                result.message="Compact 87H не содержит подтверждённого series:number; сравнение карты отключено. Используйте «Поиск карты в EEPROM». "+got.message;
             }else{
                 std::uint16_t expect1=0,expect2=0;
                 std::string err;
@@ -202,21 +315,8 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
                 const bool enabled_ok=!got.details_known||local->enabled==got.enabled;
                 const bool pin_ok=!got.details_known||localPinValue(*local)==got.pin;
                 const bool mode_ok=!got.details_known||(local->access_mode.empty()?"card":local->access_mode)==got.access_mode;
-                if(card_ok&&enabled_ok&&pin_ok&&mode_ok){
-                    result.status="match";
-                    result.message=got.details_known?"Запись контроллера полностью совпадает с системой":
-                        "Карта совпадает; компактный H/UNEX ответ не сравнивает PIN/режим. "+got.message;
-                }else{
-                    result.status="diff";
-                    std::ostringstream m;
-                    m<<"Отличия:";
-                    if(!card_ok)m<<" карта";
-                    if(got.details_known&&!enabled_ok)m<<" активность";
-                    if(got.details_known&&!pin_ok)m<<" PIN";
-                    if(got.details_known&&!mode_ok)m<<" режим";
-                    if(!got.details_known)m<<"; PIN/режим не сравнивались. "<<got.message;
-                    result.message=m.str();
-                }
+                if(card_ok&&enabled_ok&&pin_ok&&mode_ok){result.status="match";result.message="Запись контроллера полностью совпадает с системой";}
+                else{result.status="diff";std::ostringstream m;m<<"Отличия:";if(!card_ok)m<<" карта";if(got.details_known&&!enabled_ok)m<<" активность";if(got.details_known&&!pin_ok)m<<" PIN";if(got.details_known&&!mode_ok)m<<" режим";result.message=m.str();}
             }
         }
 
@@ -230,6 +330,7 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
                 else if(result.status=="diff")++job.differences;
                 else if(result.status=="missing")++job.missing;
                 else if(result.status=="unknown")++job.unknown;
+                else if(result.status=="unverified")++job.unverified;
                 else if(result.status=="empty")++job.empty;
                 else ++job.failed;
                 if(keep_result)job.results.push_back(std::move(result));
@@ -317,7 +418,7 @@ void ControllerManager::loop(){
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){

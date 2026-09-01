@@ -124,6 +124,7 @@ struct ControllerUserReadResult {
     bool controller_enabled{false};
     bool pin_set{false};
     std::string access_mode;
+    bool card_known{true};
     bool details_known{true};
     std::string raw_record_hex;
     std::string status; // match, diff, missing, unknown, empty, error
@@ -140,9 +141,42 @@ struct ControllerUserReadJob {
     int differences{};
     int missing{};
     int unknown{};
+    int unverified{};
     int empty{};
     int failed{};
     std::vector<ControllerUserReadResult> results;
+};
+
+struct ControllerEepromSearchMatch {
+    int controller_node{};
+    int eeprom_address{};
+    std::string pattern;
+    bool exact{true};
+    std::string matched_hex;
+    std::string context_hex;
+};
+
+struct ControllerEepromSearchError {
+    int controller_node{};
+    int eeprom_address{};
+    std::string message;
+};
+
+struct ControllerEepromSearchJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed
+    int card_series{};
+    int card_number{};
+    int start_address{};
+    int end_address{0xFFFF};
+    int block_size{64};
+    int total{};
+    int completed{};
+    int failed{};
+    bool truncated{false};
+    std::vector<ControllerEepromSearchMatch> matches;
+    std::vector<ControllerEepromSearchError> errors;
 };
 
 struct RawUnexEvent {

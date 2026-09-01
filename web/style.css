@@ -25,3 +25,7 @@ nav button.skud-pressed,header button.skud-pressed{box-shadow:0 0 0 4px #60a5fa5
 
 /* v0.2.6: read users back from controllers */
 .read-options{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1fr);gap:16px;margin:16px 0}.read-options>div:first-child{border:1px solid #dce2e8;border-radius:9px;background:#fafbfc;padding:14px}.read-options .check{margin-top:10px}.read-range{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 12px}.read-result-table{max-height:430px}.read-result-table td small{max-width:360px;white-space:normal}.upload-summary small{font-weight:400}@media(max-width:800px){.read-options{grid-template-columns:1fr}.read-range{grid-template-columns:1fr 1fr}}
+
+
+/* v0.2.9: read-only H-series EEPROM card finder */
+.eeprom-search-grid{display:grid;grid-template-columns:minmax(420px,1fr) minmax(360px,1fr);gap:16px;margin:16px 0}.eeprom-card-panel{padding:14px}.eeprom-range{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px}.eeprom-range input,.eeprom-range select{font-family:Consolas,"Courier New",monospace}.eeprom-result-table{max-height:430px}.eeprom-result-table code{white-space:nowrap}.eeprom-context{font-size:11px}.eeprom-errors{margin-top:10px;max-height:120px;overflow:auto;font-size:12px}.eeprom-errors>div{padding:3px 0}@media(max-width:900px){.eeprom-search-grid{grid-template-columns:1fr}.eeprom-range{grid-template-columns:1fr 1fr}.eeprom-range label:last-child{grid-column:1/-1}}

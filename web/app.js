@@ -91,6 +91,41 @@ function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filt
 function controllerDisplayName(c){return c.name||('Контроллер '+c.node);}
 
 
+function hex4(v){return Number(v).toString(16).toUpperCase().padStart(4,'0');}
+function parseHex16(v){const s=String(v||'').trim();if(!/^[0-9a-fA-F]{1,4}$/.test(s))return NaN;return parseInt(s,16);}
+async function openEepromSearch(series='',number=''){
+    await loadControllers();
+    eepromAllControllers.checked=true;
+    eepromCardSeries.value=series||'';eepromCardNumber.value=number||'';eepromStart.value='0000';eepromEnd.value='FFFF';eepromBlockSize.value='64';
+    eepromControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="eeprom-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
+    eepromSearchResult.innerHTML='';toggleEepromControllers();updateEepromSearchSummary();eepromSearchDialog.showModal();
+}
+function toggleEepromControllers(){document.querySelectorAll('.eeprom-controller').forEach(x=>{x.disabled=eepromAllControllers.checked;if(eepromAllControllers.checked)x.checked=true;});updateEepromSearchSummary();}
+function selectedEepromControllers(){return [...document.querySelectorAll('.eeprom-controller:checked')].map(x=>Number(x.value)).filter(Boolean);}
+function updateEepromSearchSummary(){
+    if(!window.eepromSearchSummary)return;const from=parseHex16(eepromStart.value),to=parseHex16(eepromEnd.value),block=Number(eepromBlockSize.value)||64;
+    const controllers=eepromAllControllers.checked?CONTROLLERS.length:selectedEepromControllers().length;const bytes=Number.isFinite(from)&&Number.isFinite(to)&&to>=from?to-from+1:0;const blocks=bytes?Math.ceil(bytes/block):0;
+    eepromSearchSummary.innerHTML=`Диапазон: <b>${bytes?hex4(from)+'..'+hex4(to):'ошибка'}</b> · ${bytes} байт · <b>${blocks}</b> блок(ов) × <b>${controllers}</b> контроллер(ов) = <b>${blocks*controllers}</b> операций 12H.`;
+}
+document.addEventListener('input',e=>{if(e.target.matches&&e.target.matches('#eepromCardSeries,#eepromCardNumber,#eepromStart,#eepromEnd'))updateEepromSearchSummary();});
+document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.eeprom-controller,#eepromBlockSize'))updateEepromSearchSummary();});
+function renderEepromSearchJob(job){
+    const state=({queued:'В очереди',running:'Чтение EEPROM',completed:'Завершено'})[job.state]||job.state;
+    const rows=(job.matches||[]).map(m=>{const c=CONTROLLERS.find(x=>x.node===m.controller_node);return `<tr><td>${m.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td><code>0x${hex4(m.eeprom_address)}</code></td><td>${m.exact?'<span class="status-pill status-present">точное</span>':'<span class="status-pill">частичное</span>'}<small class="table-subtext">${esc(m.pattern)}</small></td><td><code>${esc(m.matched_hex)}</code></td><td><code class="eeprom-context">${esc(m.context_hex)}</code></td></tr>`;}).join('');
+    const errs=(job.errors||[]).map(e=>`<div class="bad">Node ${e.controller_node}, EEPROM 0x${hex4(e.eeprom_address)}: ${esc(e.message)}</div>`).join('');
+    const trunc=job.truncated?'<div class="protocol-warning">Результатов больше 500; список ограничен. Сузьте диапазон EEPROM.</div>':'';
+    eepromSearchResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} блоков · совпадений ${(job.matches||[]).length} · ошибок ${job.failed}</div>${trunc}${rows?`<div class="upload-result-table eeprom-result-table"><table><thead><tr><th>Контроллер</th><th>EEPROM</th><th>Тип</th><th>Совпало</th><th>Контекст RAW</th></tr></thead><tbody>${rows}</tbody></table></div>`:(job.state==='completed'?'<div class="protocol-warning">Прямых совпадений известных представлений карты не найдено. Это тоже диагностический результат: карта может храниться в преобразованном формате или в другой области памяти.</div>':'')}${errs?`<div class="eeprom-errors">${errs}</div>`:''}`;
+}
+async function pollEepromSearch(jobId){for(let n=0;n<10000;n++){const r=await api('/api/controllers/eeprom-search/status?job_id='+encodeURIComponent(jobId));if(!r.ok)return;const job=await r.json();renderEepromSearchJob(job);if(job.state!=='queued'&&job.state!=='running')return;await new Promise(resolve=>setTimeout(resolve,700));}}
+async function startEepromSearch(){
+    const series=Number(eepromCardSeries.value),number=Number(eepromCardNumber.value),from=parseHex16(eepromStart.value),to=parseHex16(eepromEnd.value),block=Number(eepromBlockSize.value)||64,nodes=selectedEepromControllers();
+    if(!Number.isInteger(series)||series<0||series>65535)return alert('Серия карты должна быть 0..65535');if(!Number.isInteger(number)||number<0||number>65535)return alert('Номер карты должен быть 0..65535');if(!Number.isFinite(from)||!Number.isFinite(to)||from<0||to>0xFFFF||from>to)return alert('Диапазон EEPROM должен быть HEX 0000..FFFF');
+    if(!eepromAllControllers.checked&&!nodes.length)return alert('Выберите контроллер');if(eepromAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
+    const controllerCount=eepromAllControllers.checked?CONTROLLERS.length:nodes.length,ops=Math.ceil((to-from+1)/block)*controllerCount;if(ops>500&&!confirm(`Полное чтение потребует ${ops} операций 12H и может занять несколько минут. Продолжить?`))return;
+    startEepromSearchButton.disabled=true;eepromSearchResult.innerHTML='<div class="muted">Создание задания безопасного чтения EEPROM...</div>';
+    try{const r=await api('/api/controllers/eeprom-search',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card_series:String(series),card_number:String(number),all_controllers:eepromAllControllers.checked?'1':'0',controller_nodes:nodes.join(','),start_address:String(from),end_address:String(to),block_size:String(block)})});const j=await r.json();if(!r.ok||!j.ok){eepromSearchResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось начать поиск')+'</div>';return;}await pollEepromSearch(j.job_id);}finally{startEepromSearchButton.disabled=false;}
+}
+
 async function openUserRead(){
     if(!USERS_LOADED)await loadUsers();
     await loadControllers();
@@ -139,14 +174,16 @@ function updateReadSummary(){
 }
 document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.read-controller'))updateReadSummary();});
 
-function readStatusText(status){return ({match:'Совпадает',diff:'Отличается',missing:'Нет в контроллере',unknown:'Нет в системе',empty:'Пусто',error:'Ошибка'})[status]||status;}
+function readStatusText(status){return ({match:'Совпадает',diff:'Отличается',missing:'Нет в контроллере',unknown:'Нет в системе',unverified:'Не проверено',empty:'Пусто',error:'Ошибка'})[status]||status;}
 function renderUserReadJob(job){
     const state=({queued:'В очереди',running:'Чтение',completed:'Завершено'})[job.state]||job.state;
     const rows=(job.results||[]).map(r=>{
         const c=CONTROLLERS.find(x=>x.node===r.controller_node);
-        const cls=r.status==='match'?'ok':r.status==='empty'?'muted':'bad';
-        const detailLine=r.details_known===false
-            ?`H/UNEX compact 8B · PIN/режим не декодированы${r.raw_record_hex?' · RAW '+esc(r.raw_record_hex):''}`
+        const cls=r.status==='match'?'ok':(r.status==='empty'||r.status==='unverified')?'muted':'bad';
+        const detailLine=r.card_known===false
+            ?`H/UNEX compact 8B · карта/PIN/режим не декодированы${r.raw_record_hex?' · RAW '+esc(r.raw_record_hex):''}`
+            :r.details_known===false
+            ?`PIN/режим не декодированы${r.raw_record_hex?' · RAW '+esc(r.raw_record_hex):''}`
             :`${r.controller_enabled?'Активен':'Отключен'} · ${r.pin_set?'PIN задан':'PIN нет'} · ${esc(accessModeText(r.access_mode))}`;
         const ctrlData=r.controller_card
             ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${detailLine}</small>`
@@ -154,7 +191,7 @@ function renderUserReadJob(job){
         const local=r.local_user_id?`${r.local_user_id} — ${esc(r.local_user_name||'')}`:'—';
         return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td></tr>`;
     }).join('');
-    readResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · совпало ${job.matches} · отличается ${job.differences} · нет в контроллере ${job.missing} · неизвестных ${job.unknown} · пустых ${job.empty} · ошибок ${job.failed}</div>${rows?`<div class="upload-result-table read-result-table"><table><thead><tr><th>Контроллер</th><th>Адрес</th><th>Данные контроллера</th><th>Пользователь в системе</th><th>Сравнение</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+    readResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · совпало ${job.matches} · отличается ${job.differences} · нет в контроллере ${job.missing} · неизвестных ${job.unknown} · не проверено ${job.unverified||0} · пустых ${job.empty} · ошибок ${job.failed}</div>${rows?`<div class="upload-result-table read-result-table"><table><thead><tr><th>Контроллер</th><th>Адрес</th><th>Данные контроллера</th><th>Пользователь в системе</th><th>Сравнение</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
 }
 
 async function pollUserRead(jobId){

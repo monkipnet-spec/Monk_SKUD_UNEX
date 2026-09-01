@@ -91,6 +91,7 @@ WebServer::Res WebServer::jsonUserReadJob(const ControllerUserReadJob&job){
      <<",\"differences\":"<<job.differences
      <<",\"missing\":"<<job.missing
      <<",\"unknown\":"<<job.unknown
+     <<",\"unverified\":"<<job.unverified
      <<",\"empty\":"<<job.empty
      <<",\"failed\":"<<job.failed
      <<",\"results\":[";
@@ -105,12 +106,24 @@ WebServer::Res WebServer::jsonUserReadJob(const ControllerUserReadJob&job){
          <<",\"controller_enabled\":"<<(r.controller_enabled?"true":"false")
          <<",\"pin_set\":"<<(r.pin_set?"true":"false")
          <<",\"access_mode\":\""<<util::jsonEscape(r.access_mode)<<"\""
+         <<",\"card_known\":"<<(r.card_known?"true":"false")
          <<",\"details_known\":"<<(r.details_known?"true":"false")
          <<",\"raw_record_hex\":\""<<util::jsonEscape(r.raw_record_hex)<<"\""
          <<",\"status\":\""<<util::jsonEscape(r.status)<<"\""
          <<",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";
     }
     o<<"]}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+
+WebServer::Res WebServer::jsonEepromSearchJob(const ControllerEepromSearchJob&job){
+    std::ostringstream o;
+    o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"card_series\":"<<job.card_series<<",\"card_number\":"<<job.card_number
+     <<",\"start_address\":"<<job.start_address<<",\"end_address\":"<<job.end_address<<",\"block_size\":"<<job.block_size
+     <<",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"failed\":"<<job.failed<<",\"truncated\":"<<(job.truncated?"true":"false")<<",\"matches\":[";
+    bool first=true;for(const auto&m:job.matches){if(!first)o<<',';first=false;o<<"{\"controller_node\":"<<m.controller_node<<",\"eeprom_address\":"<<m.eeprom_address<<",\"pattern\":\""<<util::jsonEscape(m.pattern)<<"\",\"exact\":"<<(m.exact?"true":"false")<<",\"matched_hex\":\""<<util::jsonEscape(m.matched_hex)<<"\",\"context_hex\":\""<<util::jsonEscape(m.context_hex)<<"\"}";}o<<"],\"errors\":[";
+    first=true;for(const auto&e:job.errors){if(!first)o<<',';first=false;o<<"{\"controller_node\":"<<e.controller_node<<",\"eeprom_address\":"<<e.eeprom_address<<",\"message\":\""<<util::jsonEscape(e.message)<<"\"}";}o<<"]}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
 
@@ -171,6 +184,22 @@ WebServer::Res WebServer::route(const Req&r){
         return{ok?200:400,"application/json; charset=utf-8",o.str()};
     }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
+    if(r.path=="/api/controllers/eeprom-search"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);int series=-1,number=-1,start=0,end=0xFFFF,block=64;
+        try{series=std::stoi(f["card_series"]);number=std::stoi(f["card_number"]);start=std::stoi(f["start_address"]);end=std::stoi(f["end_address"]);if(!f["block_size"].empty())block=std::stoi(f["block_size"]);}catch(...){return{400,"application/json","{\"ok\":false,\"error\":\"bad numeric parameters\"}"};}
+        if(series<0||series>65535||number<0||number>65535)return{400,"application/json","{\"ok\":false,\"error\":\"card series/number must be 0..65535\"}"};
+        if(start<0||end>0xFFFF||start>end)return{400,"application/json","{\"ok\":false,\"error\":\"EEPROM range must be 0000..FFFF\"}"};
+        if(block<16||block>128)return{400,"application/json","{\"ok\":false,\"error\":\"block size must be 16..128\"}"};
+        std::vector<int> selected_nodes;auto allc=controllers_.controllers();
+        if(f["all_controllers"]=="1"){for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);}else{for(int node:parseIntList(f["controller_nodes"])){auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});if(it!=allc.end())selected_nodes.push_back(node);}}
+        if(selected_nodes.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
+        auto id=controllers_.queueEepromSearch(series,number,std::move(selected_nodes),start,end,block);
+        std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<"}";return{200,"application/json",o.str()};
+    }
+    if(r.path=="/api/controllers/eeprom-search/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.eepromSearchJob(id);if(!job)return{404,"application/json","{\"error\":\"EEPROM search job not found\"}"};return jsonEepromSearchJob(*job);
+    }
     if(r.path=="/api/controllers/read-users"&&r.method=="POST"){
         auto f=util::parseForm(r.body);
         std::vector<int> selected_nodes;

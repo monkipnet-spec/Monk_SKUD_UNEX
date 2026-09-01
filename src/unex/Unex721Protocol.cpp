@@ -271,31 +271,20 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
     out.raw_record_hex=util::hex(record);
 
     if(data_len==8){
-        // Compact Home-series/UNEX record observed on the real UNEX 721.
-        // The first four bytes map cleanly to the documented H-series
-        // decimal Site Code / Card Code pair (two big-endian 16-bit words).
-        // The remaining four bytes are deliberately kept raw until the
-        // exact UNEX PIN/access-mode layout is confirmed on known test data.
-        out.uid1=(static_cast<std::uint16_t>(record[0])<<8)|record[1];
-        out.uid2=(static_cast<std::uint16_t>(record[2])<<8)|record[3];
+        // Real UNEX 721 capture. Known control samples disproved the old
+        // assumption that bytes 0..3 are direct series:number:
+        // user 7 = card 112:53910, PIN 0031 -> RAW 00 A4 31 F1 00 00 01 01;
+        // user 5 = card 40:32010, PIN 1234 -> RAW 00 00 00 00 04 D2 00 00.
+        // Keep the whole record raw and do not invent card/PIN semantics.
         const bool all_zero=std::all_of(record.begin(),record.end(),[](std::uint8_t b){return b==0x00;});
-        const bool uid_ff=out.uid1==0xFFFF&&out.uid2==0xFFFF;
-        out.present=!all_zero&&!uid_ff;
+        out.present=!all_zero;
         out.enabled=out.present;
-        out.pin=0;
-        out.mode=0;
-        out.access_mode.clear();
-        out.details_known=false;
-        out.ok=true;
+        out.uid1=0;out.uid2=0;out.pin=0;out.mode=0;out.access_mode.clear();
+        out.card_known=false;out.details_known=false;out.ok=true;
         std::ostringstream m;
-        if(out.present){
-            m<<"Адрес "<<address<<": карта "<<util::formatCardSeries(out.uid1)<<" / "<<out.uid2
-             <<" [H/UNEX compact 8B; PIN/режим пока не декодированы; RAW="<<out.raw_record_hex<<"]";
-        }else{
-            m<<"Адрес "<<address<<" пуст [H/UNEX compact 8B; RAW="<<out.raw_record_hex<<"]";
-        }
-        out.message=m.str();
-        return out;
+        if(out.present)m<<"Адрес "<<address<<": compact H/UNEX 8B, карта/PIN не декодированы; RAW="<<out.raw_record_hex;
+        else m<<"Адрес "<<address<<" пуст [H/UNEX compact 8B; RAW="<<out.raw_record_hex<<"]";
+        out.message=m.str();return out;
     }
 
     // Enterprise-style 24-byte user record.  The user record starts with
@@ -332,6 +321,42 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
     m<<"Неизвестный формат пользовательской записи 0x87: "<<data_len<<" байт, RAW="<<out.raw_record_hex;
     out.message=m.str();
     return out;
+}
+
+
+Unex721Protocol::EepromReadOutcome Unex721Protocol::readEeprom(std::uint8_t node,int address,int length){
+    EepromReadOutcome out;out.address=address;
+    if(address<0||address>0xFFFF){out.message="Адрес EEPROM должен быть 0000..FFFF";return out;}
+    if(length<1||length>240||address+length-1>0xFFFF){out.message="Длина чтения EEPROM должна быть 1..240 и не выходить за FFFF";return out;}
+    const std::vector<std::uint8_t> data={
+        static_cast<std::uint8_t>((address>>8)&0xFF),
+        static_cast<std::uint8_t>(address&0xFF),
+        static_cast<std::uint8_t>(length)
+    };
+    // H-series CommView command: 12H + EEPROM address H/L + byte count.
+    auto r=transact(node,0x12,data,450);
+    if(!r){out.message="Нет корректного ответа на 12H Read EEPROM";return out;}
+    out.raw_frame_hex=util::hex(*r);
+    if(r->size()<6){out.message="Короткий ответ на 12H: "+out.raw_frame_hex;return out;}
+    const auto code=(*r)[3];
+    if(code==NACK){out.message="Контроллер вернул NACK на 12H: "+out.raw_frame_hex;return out;}
+    if(code!=0x03){
+        std::ostringstream m;m<<"Неожиданный ответ 12H code=0x"<<std::hex<<std::uppercase<<static_cast<int>(code)<<": "<<out.raw_frame_hex;
+        out.message=m.str();return out;
+    }
+    // Standard SOYAL Data Echo observed on the real UNEX 721:
+    // 7E LEN 00 03 SOURCE <data...> XOR SUM.
+    if(r->size()<7){out.message="Короткий Data Echo на 12H: "+out.raw_frame_hex;return out;}
+    const std::size_t data_begin=5;
+    const std::size_t data_end=r->size()-2;
+    if(data_end<data_begin||data_end-data_begin<static_cast<std::size_t>(length)){
+        std::ostringstream m;m<<"12H вернул "<<(data_end>=data_begin?data_end-data_begin:0)<<" байт вместо "<<length<<": "<<out.raw_frame_hex;
+        out.message=m.str();return out;
+    }
+    out.data.assign(r->begin()+static_cast<std::ptrdiff_t>(data_begin),r->begin()+static_cast<std::ptrdiff_t>(data_begin+length));
+    out.ok=true;
+    std::ostringstream m;m<<"12H EEPROM 0x"<<std::hex<<std::uppercase<<address<<" +"<<std::dec<<length<<" байт";
+    out.message=m.str();return out;
 }
 
 

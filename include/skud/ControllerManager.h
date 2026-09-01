@@ -44,6 +44,11 @@ public:
     std::uint64_t queueUserRead(std::vector<User> local_users,std::vector<int> controller_nodes,std::vector<int> addresses,bool include_empty);
     std::optional<ControllerUserReadJob> userReadJob(std::uint64_t id) const;
 
+    // Read-only H-series EEPROM diagnostic. Searches several common binary/BCD
+    // representations of a known series:number card without writing anything.
+    std::uint64_t queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size);
+    std::optional<ControllerEepromSearchJob> eepromSearchJob(std::uint64_t id) const;
+
 private:
     struct PendingUserUpload {
         std::uint64_t id{};
@@ -55,6 +60,17 @@ private:
         std::vector<User> users;
         std::vector<int> controller_nodes;
         bool delete_from_system{false};
+    };
+    struct PendingEepromSearch {
+        std::uint64_t id{};
+        int card_series{};
+        int card_number{};
+        std::vector<int> controller_nodes;
+        int start_address{};
+        int end_address{0xFFFF};
+        int block_size{64};
+        std::size_t controller_index{};
+        int next_address{};
     };
     struct PendingUserRead {
         std::uint64_t id{};
@@ -70,6 +86,7 @@ private:
     void processOneUserUpload(Unex721Protocol& proto);
     void processOneUserDelete(Unex721Protocol& proto);
     void processUserReadBatch(Unex721Protocol& proto);
+    void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
 
     Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
@@ -90,4 +107,9 @@ private:
     std::deque<PendingUserRead> read_queue_;
     std::map<std::uint64_t,ControllerUserReadJob> read_jobs_;
     std::uint64_t next_read_id_{1};
+
+    mutable std::mutex eeprom_mu_;
+    std::deque<PendingEepromSearch> eeprom_queue_;
+    std::map<std::uint64_t,ControllerEepromSearchJob> eeprom_jobs_;
+    std::uint64_t next_eeprom_id_{1};
 }; }

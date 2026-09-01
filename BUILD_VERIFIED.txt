@@ -54,3 +54,15 @@ v0.2.8 real UNEX 721 compact 87H:
 - accepts valid standard response 7E 0D 00 03 SID + 8 data bytes + XOR/SUM
 - exposes compact raw record and compares card without guessing PIN/mode
 - preserves 24-byte Enterprise parser
+
+
+v0.2.9 H-series EEPROM card finder:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- 12H Read EEPROM standard 0x7E Data Echo parser: PASS.
+- Pseudo-TTY/API E2E: EEPROM 0x1200..0x127F, card 112:53910, exact 00 70 D2 96 at 0x1234 found: PASS.
+- Search job progress: 2/2 blocks, zero errors: PASS.
+- Search patterns: S8/S16+N16 BE/LE, decimal packed, BCD 3+5/5+5, ASCII and N16 partial: PASS.
+- Compact real sample 87H RAW 00 A4 31 F1 00 00 01 01 is no longer exposed as a false card; card_known=false: PASS.
+- Web EEPROM search dialog/API and cache revision v=029: PASS.
+- JavaScript syntax check (node --check web/app.js): PASS.
+- Read-only safety: no 20H Write EEPROM command added; user upload/delete remains blocked on compact UNEX 721: PASS.
