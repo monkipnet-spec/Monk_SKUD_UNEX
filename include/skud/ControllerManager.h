@@ -40,6 +40,12 @@ public:
     bool userUploadProtocolReady() const;
     std::string userUploadProtocolMessage() const;
 
+    // Queue a focused controller setting action through the same serialized
+    // COM-port worker. This disables only H-series Pass Any Cards (24* bit 0x20)
+    // and performs 12H -> 20H -> 12H verified read-back.
+    std::uint64_t queueDisablePassAnyCards(int controller_node);
+    std::optional<ControllerActionJob> controllerActionJob(std::uint64_t id) const;
+
     // User deletions use the same serial queue. When delete_from_system=true,
     // the local record is removed only after every selected controller confirms
     // deletion for that user.
@@ -73,6 +79,10 @@ private:
         std::vector<int> controller_nodes;
         bool delete_from_system{false};
     };
+    struct PendingControllerAction {
+        std::uint64_t id{};
+        int controller_node{};
+    };
     struct PendingEepromSearch {
         std::uint64_t id{};
         int card_series{};
@@ -100,6 +110,7 @@ private:
     void loop();
     void processOneUserUpload(Unex721Protocol& proto);
     void processOneUserDelete(Unex721Protocol& proto);
+    void processOneControllerAction(Unex721Protocol& proto);
     void processUserReadBatch(Unex721Protocol& proto);
     void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
@@ -126,6 +137,11 @@ private:
     std::deque<PendingUserDelete> delete_queue_;
     std::map<std::uint64_t,ControllerUserDeleteJob> delete_jobs_;
     std::uint64_t next_delete_id_{1};
+
+    mutable std::mutex action_mu_;
+    std::deque<PendingControllerAction> action_queue_;
+    std::map<std::uint64_t,ControllerActionJob> action_jobs_;
+    std::uint64_t next_action_id_{1};
 
     mutable std::mutex read_mu_;
     std::deque<PendingUserRead> read_queue_;

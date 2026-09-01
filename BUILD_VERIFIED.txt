@@ -22,3 +22,15 @@ v0.3.17 checks:
 - PTY protocol test: 12H A5 -> 20H write 85 -> ACK -> 12H 85 read-back: PASS
 - Exact generated 20H frame for node 2: 7E 08 02 20 00 16 01 85 4F 0D
 - Pass Any Cards target transition at EEPROM 0016: A5 -> 85
+
+
+v0.3.18 checks:
+- Focused Controllers-page action for Pass Any Cards: added
+- Action path does not touch 83H/87H user table
+- Serial execution is queued through ControllerManager worker
+- Expected real transition for current controller: EEPROM 0x0016 A5 -> 85
+- Release build: PASS
+- web/app.js syntax: PASS
+- PTY focused action fixture: 12H A5 -> 20H 85 -> ACK -> 12H 85: PASS
+- Exact node 2 write frame: 7E 08 02 20 00 16 01 85 4F 0D
+- Result message exposes 0xA5 -> 0x85 and decimal 165 -> 133

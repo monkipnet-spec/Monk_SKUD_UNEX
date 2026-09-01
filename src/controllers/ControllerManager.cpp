@@ -194,6 +194,20 @@ std::optional<ControllerUserUploadJob> ControllerManager::userUploadJob(std::uin
     std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(id);if(it==upload_jobs_.end())return std::nullopt;return it->second;
 }
 
+std::uint64_t ControllerManager::queueDisablePassAnyCards(int controller_node){
+    std::lock_guard lk(action_mu_);
+    const auto id=next_action_id_++;
+    ControllerActionJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.controller_node=controller_node;
+    action_queue_.push_back(PendingControllerAction{id,controller_node});
+    action_jobs_[id]=std::move(job);
+    while(action_jobs_.size()>20)action_jobs_.erase(action_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerActionJob> ControllerManager::controllerActionJob(std::uint64_t id)const{
+    std::lock_guard lk(action_mu_);auto it=action_jobs_.find(id);if(it==action_jobs_.end())return std::nullopt;return it->second;
+}
+
 std::uint64_t ControllerManager::queueUserDelete(std::vector<User> users,std::vector<int> controller_nodes,bool delete_from_system){
     std::lock_guard lk(delete_mu_);
     const auto id=next_delete_id_++;
@@ -535,6 +549,28 @@ void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
     std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="completed";
 }
 
+void ControllerManager::processOneControllerAction(Unex721Protocol& proto){
+    PendingControllerAction pending;
+    {
+        std::lock_guard lk(action_mu_);
+        if(action_queue_.empty())return;
+        pending=action_queue_.front();action_queue_.pop_front();
+        auto it=action_jobs_.find(pending.id);if(it!=action_jobs_.end())it->second.state="running";
+    }
+
+    auto out=proto.disablePassAnyCards(static_cast<std::uint8_t>(pending.controller_node));
+    {
+        std::lock_guard lk(action_mu_);
+        auto it=action_jobs_.find(pending.id);
+        if(it!=action_jobs_.end()){
+            it->second.state="completed";
+            it->second.ok=out.ok;
+            it->second.status=out.status;
+            it->second.message=out.message;
+        }
+    }
+}
+
 void ControllerManager::processOneUserDelete(Unex721Protocol& proto){
     PendingUserDelete pending;
     {
@@ -589,7 +625,7 @@ void ControllerManager::loop(){
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port,[this](const std::string&direction,int node,int command,const std::string&protocol,const std::vector<std::uint8_t>&frame,const std::string&message){appendProtocolTrace(direction,node,command,protocol,frame,message);}); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port,[this](const std::string&direction,int node,int command,const std::string&protocol,const std::vector<std::uint8_t>&frame,const std::string&message){appendProtocolTrace(direction,node,command,protocol,frame,message);}); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneControllerAction(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){

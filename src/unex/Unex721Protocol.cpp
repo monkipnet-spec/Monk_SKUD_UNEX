@@ -7,6 +7,7 @@
 #include <ctime>
 #include <thread>
 #include <limits>
+#include <iomanip>
 #include <sstream>
 
 namespace skud {
@@ -248,9 +249,12 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::disablePassAnyCards(std::uint
         return{false,"pass_any_write_failed","Не удалось отключить 'любая карта': было 24*="+std::to_string(old_value)+", нужно "+std::to_string(new_value)+". "+wr.message};
 
     std::ostringstream m;
-    m<<"Pass Any Cards отключён: EEPROM 0x0016 / 24* "
-     <<static_cast<int>(old_value)<<" -> "<<static_cast<int>(new_value)
-     <<" (снят bit 0x20), подтверждено 12H read-back";
+    m<<"Pass Any Cards отключён: EEPROM 0x0016 / 24* 0x"
+     <<std::hex<<std::uppercase<<std::setw(2)<<std::setfill('0')<<static_cast<int>(old_value)
+     <<" -> 0x"<<std::setw(2)<<static_cast<int>(new_value)
+     <<std::dec<<" ("<<static_cast<int>(old_value)<<" -> "<<static_cast<int>(new_value)<<")"
+     <<"; снят bit 0x20, подтверждено 12H read-back";
+    trace("INFO",node,0x20,"semantic",{},m.str());
     return{true, old_value==new_value?"pass_any_rewritten_disabled":"pass_any_disabled", m.str()};
 }
 

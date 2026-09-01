@@ -126,6 +126,18 @@ WebServer::Res WebServer::jsonUserUploadJob(const ControllerUserUploadJob&job){
     bool first=true;for(const auto&r:job.results){if(!first)o<<',';first=false;o<<"{\"user_id\":"<<r.user_id<<",\"controller_node\":"<<r.controller_node<<",\"status\":\""<<util::jsonEscape(r.status)<<"\",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";}o<<"]}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
+WebServer::Res WebServer::jsonControllerActionJob(const ControllerActionJob&job){
+    std::ostringstream o;
+    o<<"{\"id\":"<<job.id
+     <<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\""
+     <<",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"controller_node\":"<<job.controller_node
+     <<",\"ok\":"<<(job.ok?"true":"false")
+     <<",\"status\":\""<<util::jsonEscape(job.status)<<"\""
+     <<",\"message\":\""<<util::jsonEscape(job.message)<<"\"}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+
 WebServer::Res WebServer::jsonUserDeleteJob(const ControllerUserDeleteJob&job){
     std::ostringstream o;
     o<<"{\"id\":"<<job.id
@@ -340,6 +352,21 @@ WebServer::Res WebServer::route(const Req&r){
         auto id=controllers_.queueUserDelete({slot},{node},false);
         std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"address\":"<<address<<",\"controller_node\":"<<node<<"}";
         return{200,"application/json",o.str()};
+    }
+
+    if(r.path=="/api/controllers/disable-pass-any"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);int node=0;try{node=std::stoi(f["controller_node"]);}catch(...){}
+        auto allc=controllers_.controllers();
+        auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+        if(it==allc.end())return{400,"application/json","{\"ok\":false,\"error\":\"controller not found or disabled\"}"};
+        auto id=controllers_.queueDisablePassAnyCards(node);
+        std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"controller_node\":"<<node<<"}";
+        return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/controllers/disable-pass-any/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.controllerActionJob(id);if(!job)return{404,"application/json","{\"error\":\"controller action job not found\"}"};
+        return jsonControllerActionJob(*job);
     }
 
     if(r.path=="/api/controllers/upload-users"&&r.method=="POST"){

@@ -507,3 +507,11 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - Compatibility with generic `03H` data-echo replies is retained.
 - This unblocks the full-sync safety step that reads EEPROM `0x0016`, clears the `0x20` Pass Any Cards bit, writes it through `20H`, and verifies it with `12H`.
 - Real UNEX capture used for the fix: `7E 06 00 02 02 A5 5A 03`, therefore the current `0x0016` value is `0xA5` and the expected disabled value is `0x85`.
+
+
+## v0.3.18 — focused Pass Any Cards control
+- Added a per-controller button **«Отключить пропуск любой карты»** on the Controllers page.
+- The action is serialized through the normal COM worker and performs only `12H EEPROM 0x0016 -> 20H clear bit 0x20 -> 12H read-back`.
+- User slots are not read, cleared or rewritten by this focused action.
+- Result is shown directly on the Controllers page, including the old/new 24* byte in hexadecimal and decimal.
+- Live protocol receives the raw 12H/20H frames plus a semantic completion entry.

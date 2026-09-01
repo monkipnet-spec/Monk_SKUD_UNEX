@@ -109,6 +109,16 @@ struct ControllerUserUploadJob {
     std::vector<ControllerUserUploadResult> results;
 };
 
+struct ControllerActionJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed
+    int controller_node{};
+    bool ok{false};
+    std::string status;
+    std::string message;
+};
+
 
 struct ControllerUserDeleteResult {
     int user_id{};

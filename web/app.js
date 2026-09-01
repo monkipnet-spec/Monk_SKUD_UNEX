@@ -135,7 +135,28 @@ async function clearControllerCardCatalog(){
     if(!confirm('Очистить только каталог считанных карт? Пользователи, их карты и журнал посещаемости останутся без изменений.'))return;
     const r=await api('/api/cards/controller/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось очистить каталог');await loadCards();
 }
-async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td></tr>`).join('');return CONTROLLERS;}
+async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`).join('');return CONTROLLERS;}
+
+async function disablePassAnyCards(node){
+    const c=CONTROLLERS.find(x=>Number(x.node)===Number(node));const name=c?controllerDisplayName(c):('UNEX 721 #'+node);
+    if(!confirm(`Контроллер ${node} — ${name}: отключить режим «пропуск любой карты»?\n\nБудет изменён только EEPROM 0x0016 bit 0x20. Пользовательская база не затрагивается.`))return;
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary muted';controllerActionResult.textContent=`Node ${node}: чтение EEPROM 0x0016...`;}
+    const r=await api('/api/controllers/disable-pass-any',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({controller_node:node})});
+    let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent='Ошибка: '+(j.error||'не удалось запустить операцию');}return;}
+    const jobId=j.job_id;
+    for(let i=0;i<120;i++){
+        await new Promise(resolve=>setTimeout(resolve,250));
+        const sr=await api('/api/controllers/disable-pass-any/status?job_id='+encodeURIComponent(jobId));let st={};try{st=await sr.json();}catch{}
+        if(!sr.ok)continue;
+        if(st.state==='completed'){
+            if(window.controllerActionResult){controllerActionResult.className='upload-summary '+(st.ok?'ok':'bad');controllerActionResult.innerHTML=`<b>Node ${st.controller_node}: ${st.ok?'готово':'ошибка'}</b><br>${esc(st.message||st.status||'')}`;}
+            return;
+        }
+        if(window.controllerActionResult)controllerActionResult.textContent=`Node ${node}: ${st.state==='running'?'12H → 20H → 12H, выполняется...':'в очереди COM-порта...'}`;
+    }
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent=`Node ${node}: тайм-аут ожидания результата. Проверьте Live протокол.`;}
+}
 
 function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);}
 function controllerDisplayName(c){return c.name||('Контроллер '+c.node);}
