@@ -179,6 +179,19 @@ struct ControllerEepromSearchJob {
     std::vector<ControllerEepromSearchError> errors;
 };
 
+struct ProtocolTraceEntry {
+    std::uint64_t id{};
+    std::string timestamp;
+    std::string direction; // TX, RX, EVENT, INFO
+    int node{};
+    int command{-1};
+    std::string protocol; // 0x7E, Extended, semantic
+    std::string raw_hex;
+    std::string message;
+    std::string card;
+    int user_address{-1};
+};
+
 struct RawUnexEvent {
     int node{};
     std::vector<std::uint8_t> frame;

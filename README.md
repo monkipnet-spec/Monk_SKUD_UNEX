@@ -297,3 +297,13 @@ API:
 
 
 v0.2.9 также исправляет диагностическое отображение compact 87H: после двух известных реальных записей (`user 7 = 112:53910 / PIN 0031`, `user 5 = 40:32010 / PIN 1234`) первые четыре байта 8B-record больше не выдаются за series:number. Для compact-записи Web показывает RAW и статус «Не проверено», а карту ищет отдельной безопасной функцией EEPROM 12H.
+
+
+## v0.3.0 — Live protocol
+- New **Live протокол** web tab polls an in-memory ring buffer every 500 ms.
+- Shows real TX/RX frames for standard `0x7E` and Extended protocol with Node, command and RAW HEX.
+- Semantic `EVENT` rows highlight controller events/card reads, including decoded card/user address when available.
+- TX echo is explicitly marked as ignored; bad XOR/SUM frames are visible for diagnostics.
+- Background `0x25` polling is hidden by default in UI and can be enabled for card-capture tests.
+- Clear/Pause/auto-scroll/Node filter are available; no `strace` is required for routine protocol capture.
+- Trace is memory-only (max 1000 rows), never persisted to disk.

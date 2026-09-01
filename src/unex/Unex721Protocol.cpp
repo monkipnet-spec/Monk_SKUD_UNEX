@@ -86,15 +86,22 @@ bool Unex721Protocol::validExtendedFrame(const std::vector<std::uint8_t>&f){
     if(x!=f[f.size()-2])return false;sum+=x;return static_cast<std::uint8_t>(sum&0xFF)==f.back();
 }
 
+void Unex721Protocol::trace(const std::string& direction,int node,int command,const std::string& protocol,const std::vector<std::uint8_t>& frame,const std::string& message) const{
+    if(trace_)trace_(direction,node,command,protocol,frame,message);
+}
+
 std::optional<std::vector<std::uint8_t>> Unex721Protocol::transact(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout){
     auto q=frame(node,cmd,data);
-    if(!port_.writeAll(q))return std::nullopt;
-    // Some USB-RS485 adapters echo transmitted bytes back to RX.  Do not
-    // mistake that echo for a controller reply; wait for the next valid frame.
+    trace("TX",node,cmd,"0x7E",q);
+    if(!port_.writeAll(q)){trace("INFO",node,cmd,"0x7E",q,"ошибка записи в COM");return std::nullopt;}
+    // Some USB-RS485 adapters echo transmitted bytes back to RX. Do not
+    // mistake that echo for a controller reply; keep it visible in Live protocol.
     for(int attempt=0;attempt<3;++attempt){
         auto r=port_.readFrame(timeout);
         if(r.empty())return std::nullopt;
-        if(!validFrame(r))continue;
+        const bool valid=validFrame(r);
+        trace("RX",node,cmd,"0x7E",r,!valid?"неверный XOR/SUM":(r==q?"TX echo — проигнорировано":""));
+        if(!valid)continue;
         if(r==q)continue;
         return r;
     }
@@ -103,12 +110,16 @@ std::optional<std::vector<std::uint8_t>> Unex721Protocol::transact(std::uint8_t 
 
 std::optional<std::vector<std::uint8_t>> Unex721Protocol::transactExtended(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout){
     auto q=extendedFrame(node,cmd,data);
-    if(q.empty()||!port_.writeAll(q))return std::nullopt;
+    if(q.empty())return std::nullopt;
+    trace("TX",node,cmd,"Extended",q);
+    if(!port_.writeAll(q)){trace("INFO",node,cmd,"Extended",q,"ошибка записи в COM");return std::nullopt;}
     // See transact(): extended packets may be locally echoed as well.
     for(int attempt=0;attempt<3;++attempt){
         auto r=port_.readExtendedFrame(timeout);
         if(r.empty())return std::nullopt;
-        if(!validExtendedFrame(r))continue;
+        const bool valid=validExtendedFrame(r);
+        trace("RX",node,cmd,"Extended",r,!valid?"неверный XOR/SUM":(r==q?"TX echo — проигнорировано":""));
+        if(!valid)continue;
         if(r==q)continue;
         return r;
     }

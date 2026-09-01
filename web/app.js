@@ -17,10 +17,14 @@ let CONTROLLERS=[];
 let DEPARTMENTS=[];
 let USERS_LOADED=false;
 let REPORT_RANGES={};
+let PROTOCOL_ENTRIES=[];
+let PROTOCOL_LAST_ID=0;
+let PROTOCOL_RUNNING=false;
+let PROTOCOL_TIMER=null;
 
 function enc(o){return new URLSearchParams(o)}
 async function api(url,opt={}){let r=await fetch(url,opt);if(r.status===401){location='/login.html';throw new Error('auth');}return r}
-function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='controllers')loadControllers();if(id==='reports')loadReportSettings();}
+function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='controllers')loadControllers();if(id==='reports')loadReportSettings();if(id==='protocol')startProtocolLive();else stopProtocolLivePolling();}
 
 function formatUptime(total){total=Math.max(0,Math.floor(Number(total)||0));const d=Math.floor(total/86400);total%=86400;const h=Math.floor(total/3600);total%=3600;const m=Math.floor(total/60);const sec=total%60;const clock=[h,m,sec].map(x=>String(x).padStart(2,'0')).join(':');return d>0?d+'д '+clock:clock;}
 async function refreshStatus(){let r=await api('/api/status');let s=await r.json();serialStatus.textContent=s.serial_status;serialStatus.className=s.serial_status==='ONLINE'?'ok':'bad';serialDevice.textContent=s.serial_device||'USB-COM не найден';presentCount.textContent=s.present_count;repeatSec.textContent=s.repeat_seconds+' сек';if(window.cpuLoad)cpuLoad.textContent=Number(s.cpu_percent||0).toFixed(1)+'%';if(window.ramLoad)ramLoad.textContent=Number(s.ram_percent||0).toFixed(1)+'%';if(window.ramDetail)ramDetail.textContent=(s.ram_used_mb||0)+' / '+(s.ram_total_mb||0)+' MB';if(window.uptimeValue)uptimeValue.textContent=formatUptime(s.uptime_seconds);}
@@ -548,6 +552,32 @@ async function saveReportSchedule(){
 async function importSettings(file){if(!file)return;let text=await file.text();let r=await api('/api/import/settings',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});let j=await r.json();alert(j.ok?'Настройки импортированы. Перезапустите службу.':'Ошибка импорта');}
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}
+
+function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',132:'84H Write User',135:'87H Read User'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
+function protocolDirectionLabel(d){return ({TX:'TX →',RX:'← RX',EVENT:'CARD/EVENT',INFO:'INFO'})[d]||d;}
+function protocolVisibleEntries(){const showPoll=window.protocolShowPoll&&protocolShowPoll.checked;const node=window.protocolNodeFilter?Number(protocolNodeFilter.value):0;return PROTOCOL_ENTRIES.filter(e=>(!node||e.node===node)&&(showPoll||e.command!==0x25||e.direction==='EVENT'));}
+function renderProtocolLive(){
+    if(!window.protocolLiveBody)return;const rows=protocolVisibleEntries().slice(-400);
+    protocolLiveBody.innerHTML=rows.map(e=>{const cls=e.direction==='EVENT'?'protocol-event':e.direction==='TX'?'protocol-tx':e.direction==='RX'?'protocol-rx':'protocol-info';const info=[e.message,e.user_address>=0?'user='+e.user_address:'',e.card?'карта '+e.card:''].filter(Boolean).join(' · ');return `<tr class="${cls}"><td class="protocol-time">${esc(e.timestamp)}</td><td><b>${esc(protocolDirectionLabel(e.direction))}</b></td><td>${e.node||'—'}</td><td><code>${esc(protocolCommandName(e.command))}</code></td><td>${esc(e.protocol||'')}</td><td>${esc(info||'—')}</td><td><code class="protocol-raw">${esc(e.raw_hex||'')}</code></td></tr>`;}).join('')||'<tr><td colspan="7" class="muted">Пока нет записей. Приложите карту или выполните операцию с контроллером.</td></tr>';
+    protocolLiveHint.textContent=`В памяти ${PROTOCOL_ENTRIES.length} записей · показано ${rows.length} · last id ${PROTOCOL_LAST_ID}`;
+    if(protocolAutoScroll.checked){const box=document.querySelector('.protocol-live-table');if(box)box.scrollTop=box.scrollHeight;}
+}
+async function refreshProtocolLive(){
+    if(!PROTOCOL_RUNNING)return;
+    try{
+        const r=await api('/api/protocol/live?after='+encodeURIComponent(PROTOCOL_LAST_ID)+'&limit=300');if(!r.ok)return;const j=await r.json();
+        if(j.entries&&j.entries.length){
+            PROTOCOL_ENTRIES.push(...j.entries);if(PROTOCOL_ENTRIES.length>1000)PROTOCOL_ENTRIES=PROTOCOL_ENTRIES.slice(-1000);PROTOCOL_LAST_ID=Math.max(PROTOCOL_LAST_ID,Number(j.last_id)||0);
+            for(const e of j.entries){if(e.node&&!document.querySelector(`#protocolNodeFilter option[value="${e.node}"]`)){const o=document.createElement('option');o.value=e.node;o.textContent='Node '+e.node;protocolNodeFilter.appendChild(o);}}
+            renderProtocolLive();
+        }
+    }catch(e){}
+}
+function startProtocolLive(){PROTOCOL_RUNNING=true;protocolLiveState.textContent='LIVE';protocolLiveDot.classList.remove('paused');protocolPauseButton.textContent='Пауза';refreshProtocolLive();if(!PROTOCOL_TIMER)PROTOCOL_TIMER=setInterval(refreshProtocolLive,500);}
+function stopProtocolLivePolling(){if(PROTOCOL_TIMER){clearInterval(PROTOCOL_TIMER);PROTOCOL_TIMER=null;}}
+function toggleProtocolLive(){PROTOCOL_RUNNING=!PROTOCOL_RUNNING;protocolLiveState.textContent=PROTOCOL_RUNNING?'LIVE':'ПАУЗА';protocolLiveDot.classList.toggle('paused',!PROTOCOL_RUNNING);protocolPauseButton.textContent=PROTOCOL_RUNNING?'Пауза':'Продолжить';if(PROTOCOL_RUNNING){refreshProtocolLive();if(!PROTOCOL_TIMER)PROTOCOL_TIMER=setInterval(refreshProtocolLive,500);}else stopProtocolLivePolling();}
+async function clearProtocolLive(){await api('/api/protocol/live/clear',{method:'POST'});PROTOCOL_ENTRIES=[];PROTOCOL_LAST_ID=0;renderProtocolLive();}
+
 async function logout(){await api('/api/logout');location='/login.html'}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function attr(s){return esc(s)}function js(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
 

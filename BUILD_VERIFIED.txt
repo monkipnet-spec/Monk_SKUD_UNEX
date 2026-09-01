@@ -66,3 +66,16 @@ v0.2.9 H-series EEPROM card finder:
 - Web EEPROM search dialog/API and cache revision v=029: PASS.
 - JavaScript syntax check (node --check web/app.js): PASS.
 - Read-only safety: no 20H Write EEPROM command added; user upload/delete remains blocked on compact UNEX 721: PASS.
+
+
+v0.3.0 live protocol monitor:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- JavaScript syntax check (node --check web/app.js): PASS.
+- API /api/protocol/live returns incremental ring-buffer entries: PASS.
+- API /api/protocol/live/clear empties the ring buffer: PASS.
+- Pseudo-TTY E2E: Extended 0x25 TX + standard 0x7E TX/RX visible in API: PASS.
+- Real captured 7E 1D event frame injected via pseudo-TTY -> one semantic EVENT row with RAW HEX: PASS.
+- standard/extended TX/RX instrumentation includes echo/checksum notes.
+- web Live protocol tab: pause/clear/Node filter/background-0x25 filter/autoscroll.
+- Embedded web UI contains Live protocol section and cache revision v=030: PASS.
+- Trace is memory-only and bounded to 1000 entries.

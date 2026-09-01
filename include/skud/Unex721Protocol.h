@@ -1,12 +1,15 @@
 #pragma once
 #include "skud/Types.h"
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 namespace skud { class SerialPort;
 class Unex721Protocol {
 public:
+    using TraceFn = std::function<void(const std::string&,int,int,const std::string&,const std::vector<std::uint8_t>&,const std::string&)>;
     struct UserWriteOutcome {
         bool ok{false};
         std::string status;
@@ -35,7 +38,7 @@ public:
         std::string message;
     };
 
-    explicit Unex721Protocol(SerialPort& port):port_(port){}
+    explicit Unex721Protocol(SerialPort& port,TraceFn trace={}):port_(port),trace_(std::move(trace)){}
 
     // Legacy compact packet used by the first UNEX implementation.
     static std::vector<std::uint8_t> frame(std::uint8_t node,std::uint8_t command,const std::vector<std::uint8_t>&data={});
@@ -62,5 +65,7 @@ private:
     std::optional<std::vector<std::uint8_t>> transactExtended(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout_ms=180);
     RawUnexEvent decodeEvent(std::uint8_t node,const std::vector<std::uint8_t>&f) const;
     RawUnexEvent decodeExtendedEvent(std::uint8_t node,const std::vector<std::uint8_t>&f) const;
+    void trace(const std::string& direction,int node,int command,const std::string& protocol,const std::vector<std::uint8_t>& frame,const std::string& message={}) const;
     SerialPort& port_;
+    TraceFn trace_;
 }; }

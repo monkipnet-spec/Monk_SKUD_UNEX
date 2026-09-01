@@ -146,6 +146,11 @@ WebServer::Res WebServer::jsonReportSettings(){
      <<",\"last_error\":\""<<util::jsonEscape(s.last_error)<<"\"}}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
+WebServer::Res WebServer::jsonProtocolTrace(std::uint64_t after_id,std::size_t limit){
+    auto entries=controllers_.protocolTrace(after_id,limit);std::ostringstream o;o<<"{\"entries\":[";bool first=true;std::uint64_t last=after_id;
+    for(const auto&e:entries){if(!first)o<<',';first=false;last=std::max(last,e.id);o<<"{\"id\":"<<e.id<<",\"timestamp\":\""<<util::jsonEscape(e.timestamp)<<"\",\"direction\":\""<<util::jsonEscape(e.direction)<<"\",\"node\":"<<e.node<<",\"command\":"<<e.command<<",\"protocol\":\""<<util::jsonEscape(e.protocol)<<"\",\"raw_hex\":\""<<util::jsonEscape(e.raw_hex)<<"\",\"message\":\""<<util::jsonEscape(e.message)<<"\",\"card\":\""<<util::jsonEscape(e.card)<<"\",\"user_address\":"<<e.user_address<<"}";}
+    o<<"],\"last_id\":"<<last<<"}";return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/login"&&r.method=="POST"){auto f=util::parseForm(r.body);auto salt=cfg_.get("auth.salt");auto hash=util::sha256Hex(salt+f["password"]);if(f["username"]==cfg_.get("auth.username","admin")&&util::constantTimeEqual(hash,cfg_.get("auth.password_hash"))){auto sid=util::randomToken();{std::lock_guard lk(sessions_mu_);sessions_[sid]=f["username"];}Res x{200,"application/json","{\"ok\":true}"};x.headers.push_back({"Set-Cookie","SKUDSID="+sid+"; Path=/; HttpOnly; SameSite=Strict"});return x;}return{401,"application/json","{\"ok\":false}"};}
     if(r.path=="/login.html")return file("login.html","text/html; charset=utf-8");
@@ -184,6 +189,8 @@ WebServer::Res WebServer::route(const Req&r){
         return{ok?200:400,"application/json; charset=utf-8",o.str()};
     }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
+    if(r.path=="/api/protocol/live"&&r.method=="GET"){auto q=util::parseForm(r.query);std::uint64_t after=0;std::size_t limit=250;try{if(!q["after"].empty())after=std::stoull(q["after"]);if(!q["limit"].empty())limit=static_cast<std::size_t>(std::stoul(q["limit"]));}catch(...){}return jsonProtocolTrace(after,limit);}
+    if(r.path=="/api/protocol/live/clear"&&r.method=="POST"){controllers_.clearProtocolTrace();return{200,"application/json","{\"ok\":true}"};}
     if(r.path=="/api/controllers/eeprom-search"&&r.method=="POST"){
         auto f=util::parseForm(r.body);int series=-1,number=-1,start=0,end=0xFFFF,block=64;
         try{series=std::stoi(f["card_series"]);number=std::stoi(f["card_number"]);start=std::stoi(f["start_address"]);end=std::stoi(f["end_address"]);if(!f["block_size"].empty())block=std::stoi(f["block_size"]);}catch(...){return{400,"application/json","{\"ok\":false,\"error\":\"bad numeric parameters\"}"};}

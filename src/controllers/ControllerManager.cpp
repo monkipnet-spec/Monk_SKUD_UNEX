@@ -7,6 +7,7 @@
 #include "skud/Util.h"
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -15,6 +16,15 @@
 
 namespace skud {
 namespace {
+std::string traceTimestamp(){
+    using namespace std::chrono;
+    const auto now=system_clock::now();
+    const auto ms=duration_cast<milliseconds>(now.time_since_epoch())%1000;
+    const auto t=system_clock::to_time_t(now);
+    std::tm tm{};localtime_r(&t,&tm);
+    std::ostringstream o;o<<std::put_time(&tm,"%H:%M:%S")<<'.'<<std::setw(3)<<std::setfill('0')<<ms.count();
+    return o.str();
+}
 std::string userFullName(const User& u){
     std::string n=u.last_name;
     if(!u.first_name.empty()){if(!n.empty())n+=' ';n+=u.first_name;}
@@ -75,6 +85,15 @@ bool ControllerManager::renameController(int node,const std::string&name){{std::
 std::string ControllerManager::serialStatus()const{std::lock_guard lk(mu_);return serial_status_;}
 std::string ControllerManager::serialDevice()const{std::lock_guard lk(mu_);return serial_device_;}
 void ControllerManager::setRawEventCallback(RawEventFn fn){std::lock_guard lk(mu_);raw_cb_=std::move(fn);}
+void ControllerManager::appendProtocolTrace(std::string direction,int node,int command,std::string protocol,const std::vector<std::uint8_t>&frame,std::string message,std::string card,int user_address){
+    ProtocolTraceEntry e;e.timestamp=traceTimestamp();e.direction=std::move(direction);e.node=node;e.command=command;e.protocol=std::move(protocol);e.raw_hex=util::hex(frame);e.message=std::move(message);e.card=std::move(card);e.user_address=user_address;
+    std::lock_guard lk(trace_mu_);e.id=next_trace_id_++;trace_entries_.push_back(std::move(e));while(trace_entries_.size()>1000)trace_entries_.pop_front();
+}
+std::vector<ProtocolTraceEntry> ControllerManager::protocolTrace(std::uint64_t after_id,std::size_t limit)const{
+    limit=std::clamp<std::size_t>(limit,1,500);std::vector<ProtocolTraceEntry> out;std::lock_guard lk(trace_mu_);
+    for(const auto&e:trace_entries_)if(e.id>after_id){out.push_back(e);if(out.size()>=limit)break;}return out;
+}
+void ControllerManager::clearProtocolTrace(){std::lock_guard lk(trace_mu_);trace_entries_.clear();last_event_trace_raw_.clear();}
 
 bool ControllerManager::userUploadProtocolReady()const{return Unex721Protocol::userWriteSupported();}
 std::string ControllerManager::userUploadProtocolMessage()const{return Unex721Protocol::userWriteSupportMessage();}
@@ -418,7 +437,7 @@ void ControllerManager::loop(){
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port,[this](const std::string&direction,int node,int command,const std::string&protocol,const std::vector<std::uint8_t>&frame,const std::string&message){appendProtocolTrace(direction,node,command,protocol,frame,message);}); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){
@@ -431,7 +450,13 @@ void ControllerManager::loop(){
             auto evt=proto.getOldestEvent((std::uint8_t)node); bool online=port.isOpen();
             RawEventFn cb; std::string cname;
             {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.node==node){c.online=online;if(online)c.last_seen=util::nowLocal();if(evt)c.last_raw_hex=evt->raw_hex;cname=c.name;}cb=raw_cb_;}
-            if(evt){ if(cb)cb(*evt); if(!evt->card.empty()){attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);proto.removeOldestEvent((std::uint8_t)node);} /* if card undecoded, do NOT delete the controller event */ }
+            if(evt){
+                bool log_semantic=false;{std::lock_guard lk(trace_mu_);if(last_event_trace_raw_!=evt->raw_hex){last_event_trace_raw_=evt->raw_hex;log_semantic=true;}}
+                if(log_semantic){std::string msg="Событие контроллера";if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);if(!evt->card.empty())msg+=", карта="+evt->card;else msg+=", карта пока не декодирована";appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);}
+                if(cb)cb(*evt);
+                if(!evt->card.empty()){attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);proto.removeOldestEvent((std::uint8_t)node);}
+                /* if card undecoded, do NOT delete the controller event */
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.getInt("controllers.poll_interval_ms",200)));
         }
     }

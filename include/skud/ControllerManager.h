@@ -49,6 +49,10 @@ public:
     std::uint64_t queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size);
     std::optional<ControllerEepromSearchJob> eepromSearchJob(std::uint64_t id) const;
 
+    // In-memory live protocol ring buffer for web diagnostics.
+    std::vector<ProtocolTraceEntry> protocolTrace(std::uint64_t after_id=0,std::size_t limit=250) const;
+    void clearProtocolTrace();
+
 private:
     struct PendingUserUpload {
         std::uint64_t id{};
@@ -88,6 +92,7 @@ private:
     void processUserReadBatch(Unex721Protocol& proto);
     void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
+    void appendProtocolTrace(std::string direction,int node,int command,std::string protocol,const std::vector<std::uint8_t>& frame,std::string message={},std::string card={},int user_address=-1);
 
     Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
     mutable std::mutex mu_; std::vector<Controller> controllers_; std::string serial_status_{"OFFLINE"}; std::string serial_device_;
@@ -112,4 +117,9 @@ private:
     std::deque<PendingEepromSearch> eeprom_queue_;
     std::map<std::uint64_t,ControllerEepromSearchJob> eeprom_jobs_;
     std::uint64_t next_eeprom_id_{1};
+
+    mutable std::mutex trace_mu_;
+    std::deque<ProtocolTraceEntry> trace_entries_;
+    std::uint64_t next_trace_id_{1};
+    std::string last_event_trace_raw_;
 }; }
