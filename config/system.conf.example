@@ -6,6 +6,7 @@ serial.baudrate=9600
 controllers.scan_from=1
 controllers.scan_to=16
 controllers.poll_interval_ms=200
+cards.auto_create_unknown=false
 attendance.accidental_repeat_seconds=60
 time_sync.enabled=true
 time_sync.interval_minutes=60

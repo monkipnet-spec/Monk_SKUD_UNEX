@@ -93,7 +93,40 @@ async function deleteDepartment(name){
     await loadDepartments();
 }
 
-async function loadCards(){await loadUsers();let a=await (await api('/api/cards/active')).json();cardsBody.innerHTML=a.length?a.map(x=>`<tr><td><b>${esc(cardTextFromRaw(x.card))}</b><small class="read-card-badge">получена из 25H</small></td><td>${x.controller_node||'—'}</td><td>${x.user_id||'—'}</td><td>${esc(x.user_name||'Не привязана')}</td><td>${esc(x.department||'')}</td><td>${esc(x.last_read)}</td><td>${esc(x.last_event)}</td><td>${x.user_id?`<button class="mini" onclick="editUser(${x.user_id})">Пользователь</button> <button class="mini danger" onclick="removeCard('${js(x.card)}')">Отвязать эту карту</button>`:`<button class="mini" onclick="openAssign('${js(x.card)}')">Добавить пользователю</button>`}</td></tr>`).join(''):'<tr><td colspan="8" class="muted">Контроллер ещё не передавал распознанных карт.</td></tr>';}
+async function loadCards(){
+    await loadUsers();
+    const [cardsResp,settingsResp]=await Promise.all([api('/api/cards/controller'),api('/api/cards/controller/settings')]);
+    const a=await cardsResp.json(),settings=await settingsResp.json();
+    if(window.cardAutoCreate)cardAutoCreate.checked=!!settings.auto_create_unknown;
+    const unique=[...new Set(a.map(x=>x.card))],linked=[...new Set(a.filter(x=>x.linked).map(x=>x.card))],unlinked=unique.filter(c=>!linked.includes(c));
+    if(window.cardsSummary)cardsSummary.textContent=`Уникальных карт: ${unique.length} · автоматически/вручную привязано: ${linked.length} · не привязано: ${unlinked.length}`;
+    cardsBody.innerHTML=a.length?a.map(x=>{
+        const status=x.linked?'<span class="status-pill status-present">Привязана</span><small class="table-subtext">совпадение по series:number</small>':'<span class="status-pill status-warn">Новая карта</span>';
+        const user=x.linked?`<b>${esc(x.user_name||('Пользователь №'+x.user_id))}</b><small class="table-subtext">${esc(x.department||'Без отдела')}</small>`:'<span class="muted">Не привязана</span>';
+        const actions=x.linked
+            ?`<button class="mini" onclick="editUser(${x.user_id})">Открыть пользователя</button> <button class="mini danger" onclick="removeCard('${js(x.card)}')">Отвязать</button>`
+            :`<button class="mini" onclick="openAssign('${js(x.card)}')">Привязать</button> <button class="mini" onclick="createCardUser('${js(x.card)}')">Создать пользователя</button>`;
+        return `<tr><td><b>${esc(cardTextFromRaw(x.card))}</b><small class="read-card-badge">реальный 25H · RAW подтверждён</small></td><td>${x.controller_node||'—'}<small class="table-subtext">${esc(x.controller_name||'')}</small></td><td>${status}</td><td>${user}</td><td>${esc(x.first_seen||'—')}</td><td>${esc(x.last_seen||'—')}</td><td>${Number(x.read_count||0)}</td><td>${actions}</td></tr>`;
+    }).join(''):'<tr><td colspan="8" class="muted">Каталог пуст. Приложите карты к контроллеру: реальные 25H-события будут добавляться сюда автоматически.</td></tr>';
+}
+async function saveCardImportSettings(){
+    const auto=window.cardAutoCreate&&cardAutoCreate.checked?'1':'0';
+    const r=await api('/api/cards/controller/settings',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({auto_create_unknown:auto})});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось сохранить режим');
+    alert(auto==='1'?'Автосоздание включено. Новая неизвестная карта сразу станет отдельным пользователем.':'Автосоздание выключено. Новые карты будут ждать ручной привязки.');
+}
+async function createCardUser(card){
+    const r=await api('/api/cards/create-user',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card})});const j=await r.json();if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось создать пользователя'));
+    await loadUsers();await loadCards();editUser(j.id);
+}
+async function createAllCardUsers(){
+    if(!confirm('Создать отдельного пользователя для каждой непривязанной карты из каталога? Имена-заглушки можно будет отредактировать позже.'))return;
+    const r=await api('/api/cards/create-users',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось создать пользователей');
+    await loadUsers();await loadCards();alert(`Создано: ${j.created}; уже привязано: ${j.already_linked}; ошибок: ${j.failed}`);
+}
+async function clearControllerCardCatalog(){
+    if(!confirm('Очистить только каталог считанных карт? Пользователи, их карты и журнал посещаемости останутся без изменений.'))return;
+    const r=await api('/api/cards/controller/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось очистить каталог');await loadCards();
+}
 async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td></tr>`).join('');return CONTROLLERS;}
 
 function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);}

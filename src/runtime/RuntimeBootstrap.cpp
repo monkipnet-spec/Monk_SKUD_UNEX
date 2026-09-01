@@ -84,6 +84,7 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
     if (!writeTextIfMissing(base / "config" / "controllers.csv", "node;name;model;enabled\n", error)) return false;
     if (!writeTextIfMissing(base / "data" / "card_state.csv", "state_key;state;last_read\n", error)) return false;
     if (!writeTextIfMissing(base / "data" / "active_cards.csv", "card;user_id;user_name;department;last_read;last_event;controller_node\n", error)) return false;
+    if (!writeTextIfMissing(base / "data" / "controller_cards.csv", "card;controller_node;controller_name;first_seen;last_seen;read_count;last_raw_hex\n", error)) return false;
 
     // The complete UI is embedded in the executable. This makes a copied
     // binary self-contained: an empty working directory becomes runnable on

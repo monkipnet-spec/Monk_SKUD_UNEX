@@ -27,6 +27,11 @@ public:
     std::string serialDevice() const;
     void setRawEventCallback(RawEventFn fn);
 
+    // Persistent inventory of real cards decoded from standard 25H events.
+    // Existing local users are matched dynamically by exact series:number.
+    std::vector<ControllerCardRecord> controllerCards() const;
+    void clearControllerCards();
+
     // User uploads are queued so the web thread never touches the serial port.
     std::uint64_t queueUserUpload(std::vector<User> users,std::vector<int> controller_nodes);
     std::optional<ControllerUserUploadJob> userUploadJob(std::uint64_t id) const;
@@ -93,6 +98,9 @@ private:
     void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
     void appendProtocolTrace(std::string direction,int node,int command,std::string protocol,const std::vector<std::uint8_t>& frame,std::string message={},std::string card={},int user_address=-1);
+    void rememberControllerCard(const std::string& card,int node,const std::string& controller_name,const std::string& raw_hex);
+    bool loadControllerCards();
+    bool saveControllerCards() const;
 
     Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
     mutable std::mutex mu_; std::vector<Controller> controllers_; std::string serial_status_{"OFFLINE"}; std::string serial_device_;
@@ -117,6 +125,10 @@ private:
     std::deque<PendingEepromSearch> eeprom_queue_;
     std::map<std::uint64_t,ControllerEepromSearchJob> eeprom_jobs_;
     std::uint64_t next_eeprom_id_{1};
+
+    mutable std::mutex card_mu_;
+    std::map<std::string,ControllerCardRecord> controller_cards_;
+    std::string controller_cards_path_;
 
     mutable std::mutex trace_mu_;
     std::deque<ProtocolTraceEntry> trace_entries_;

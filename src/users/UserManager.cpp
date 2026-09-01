@@ -173,6 +173,30 @@ bool UserManager::assignCard(int id,const std::string& card){
     }
     return save();
 }
+
+std::optional<User> UserManager::ensureUserForCard(const std::string& card){
+    const auto canonical=canonicalCard(card);
+    if(canonical.empty())return std::nullopt;
+    User result;
+    bool created=false;
+    {
+        std::lock_guard lk(mu_);
+        for(const auto&u:users_)if(userHasCard(u,canonical))return u;
+        int max_id=0;for(const auto&u:users_)max_id=std::max(max_id,u.id);
+        result.id=max_id+1;
+        result.enabled=true;
+        // A visible placeholder makes bulk controller imports understandable.
+        // The operator can immediately open and edit the created user.
+        result.last_name="Карта";
+        result.first_name=canonical;
+        result.cards.push_back(canonical);
+        normalizeUser(result);
+        users_.push_back(result);
+        created=true;
+    }
+    if(created&&!save())return std::nullopt;
+    return result;
+}
 bool UserManager::removeCard(const std::string& card){
     const auto canonical=canonicalCard(card);if(canonical.empty())return false;
     bool ok=false;{

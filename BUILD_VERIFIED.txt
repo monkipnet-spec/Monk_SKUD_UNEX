@@ -104,3 +104,17 @@ v0.3.3 multi-card users / controller-read onboarding:
 - HTTP API /api/cards/assign adds a third card without replacing existing cards: PASS.
 - Web UI add/remove multiple-card editor + controller-read onboarding controls: PASS (node --check web/app.js).
 - Web cache revision v=033.
+
+v0.3.4 persistent real-card inventory / onboarding workflow:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- JavaScript syntax check (`node --check web/app.js`): PASS.
+- Embedded runtime Web assets contain cache revision v=034 and «Реальные карты из контроллеров»: PASS.
+- Real captured standard 25H frame injected through pseudo-TTY: 112:53910 decoded and persisted to data/controller_cards.csv: PASS.
+- 37H acknowledgement after imported event: PASS; FIFO event removed.
+- cards.auto_create_unknown=true: unknown real 25H card automatically creates editable placeholder user with card 112:53910: PASS.
+- GET /api/cards/controller dynamically reports existing exact-card owner as linked: PASS.
+- POST /api/cards/create-user creates one placeholder user for an unlinked controller card: PASS.
+- POST /api/cards/create-users bulk test: 2 unknown cards created, 1 existing card auto-linked, 0 failures: PASS.
+- Controller-card auto-create setting GET/POST persistence: PASS.
+- POST /api/cards/controller/clear clears only controller card catalog and leaves users intact: PASS.
+- data/controller_cards.csv runtime bootstrap + Git ignore: PASS.

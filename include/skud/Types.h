@@ -50,6 +50,19 @@ struct CardActivity {
     int controller_node{};
 };
 
+// Persistent inventory of real cards observed in confirmed standard 25H
+// events from UNEX 721 controllers. This is independent of attendance state:
+// it is used to onboard cards into the local user database.
+struct ControllerCardRecord {
+    std::string card;
+    int controller_node{};
+    std::string controller_name;
+    std::string first_seen;
+    std::string last_seen;
+    std::uint64_t read_count{};
+    std::string last_raw_hex;
+};
+
 struct DailyAttendance {
     int user_id{};
     std::string user_name;

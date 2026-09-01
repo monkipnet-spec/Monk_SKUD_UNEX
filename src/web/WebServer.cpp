@@ -57,6 +57,20 @@ WebServer::Res WebServer::jsonUsers(){
 }
 WebServer::Res WebServer::jsonDepartments(){auto v=departments_.list();std::ostringstream o;o<<"[";bool first=true;for(const auto&name:v){if(!first)o<<',';first=false;o<<"\""<<util::jsonEscape(name)<<"\"";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonCards(){auto v=attendance_.activities();std::ostringstream o;o<<"[";bool first=true;for(auto&a:v){if(!first)o<<',';first=false;o<<"{\"card\":\""<<util::jsonEscape(a.card)<<"\",\"user_id\":"<<a.user_id<<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\",\"department\":\""<<util::jsonEscape(a.department)<<"\",\"last_read\":\""<<a.last_read<<"\",\"last_event\":\""<<util::jsonEscape(a.last_event)<<"\",\"controller_node\":"<<a.controller_node<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+
+WebServer::Res WebServer::jsonControllerCards(){
+    auto cards=controllers_.controllerCards();std::ostringstream o;o<<"[";bool first=true;
+    for(const auto&c:cards){
+        if(!first)o<<',';first=false;auto user=users_.byCard(c.card);std::string name;
+        if(user){name=user->last_name;if(!user->first_name.empty()){if(!name.empty())name+=' ';name+=user->first_name;}if(!user->middle_name.empty()){if(!name.empty())name+=' ';name+=user->middle_name;}if(name.empty())name="Пользователь №"+std::to_string(user->id);}
+        o<<"{\"card\":\""<<util::jsonEscape(c.card)<<"\",\"controller_node\":"<<c.controller_node
+         <<",\"controller_name\":\""<<util::jsonEscape(c.controller_name)<<"\",\"first_seen\":\""<<util::jsonEscape(c.first_seen)
+         <<"\",\"last_seen\":\""<<util::jsonEscape(c.last_seen)<<"\",\"read_count\":"<<c.read_count
+         <<",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\",\"linked\":"<<(user?"true":"false")
+         <<",\"user_id\":"<<(user?user->id:0)<<",\"user_name\":\""<<util::jsonEscape(name)<<"\",\"department\":\""<<util::jsonEscape(user?user->department:std::string{})<<"\"}";
+    }
+    o<<"]";return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::jsonTodayAttendance(){
     auto v=attendance_.todayAttendance();
     std::ostringstream o;o<<"[";bool first=true;
@@ -188,6 +202,8 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/users"&&r.method=="GET")return jsonUsers();
     if(r.path=="/api/departments"&&r.method=="GET")return jsonDepartments();
     if(r.path=="/api/cards/active")return jsonCards();
+    if(r.path=="/api/cards/controller"&&r.method=="GET")return jsonControllerCards();
+    if(r.path=="/api/cards/controller/settings"&&r.method=="GET"){return{200,"application/json",std::string("{\"auto_create_unknown\":")+(cfg_.getBool("cards.auto_create_unknown",false)?"true":"false")+"}"};}
     if(r.path=="/api/attendance/today"&&r.method=="GET")return jsonTodayAttendance();
     if(r.path=="/api/reports/settings"&&r.method=="GET")return jsonReportSettings();
     if(r.path=="/api/reports/settings"&&r.method=="POST"){
@@ -392,6 +408,18 @@ WebServer::Res WebServer::route(const Req&r){
         if(users_.departmentInUse(name))return{200,"application/json","{\"ok\":false,\"error\":\"department is used by users\"}"};
         bool ok=departments_.erase(name);
         return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"department not found\"}"};
+    }
+    if(r.path=="/api/cards/controller/settings"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);cfg_.set("cards.auto_create_unknown",f["auto_create_unknown"]=="1"?"true":"false");const bool ok=cfg_.save();return{ok?200:400,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};
+    }
+    if(r.path=="/api/cards/controller/clear"&&r.method=="POST"){controllers_.clearControllerCards();return{200,"application/json","{\"ok\":true}"};}
+    if(r.path=="/api/cards/create-user"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);const auto card=util::trim(f["card"]);auto existing=users_.byCard(card);auto u=users_.ensureUserForCard(card);if(!u)return{400,"application/json","{\"ok\":false,\"error\":\"Некорректная карта\"}"};attendance_.refreshUserMetadata();std::ostringstream o;o<<"{\"ok\":true,\"id\":"<<u->id<<",\"created\":"<<(existing?"false":"true")<<"}";return{200,"application/json",o.str()};
+    }
+    if(r.path=="/api/cards/create-users"&&r.method=="POST"){
+        auto records=controllers_.controllerCards();std::vector<std::string> seen;std::vector<int> ids;int created=0,already=0,failed=0;
+        for(const auto&rec:records){if(std::find(seen.begin(),seen.end(),rec.card)!=seen.end())continue;seen.push_back(rec.card);if(auto old=users_.byCard(rec.card)){++already;continue;}auto u=users_.ensureUserForCard(rec.card);if(u){++created;ids.push_back(u->id);}else ++failed;}
+        if(created>0)attendance_.refreshUserMetadata();std::ostringstream o;o<<"{\"ok\":true,\"created\":"<<created<<",\"already_linked\":"<<already<<",\"failed\":"<<failed<<",\"ids\":[";for(std::size_t i=0;i<ids.size();++i){if(i)o<<',';o<<ids[i];}o<<"]}";return{200,"application/json",o.str()};
     }
     if(r.path=="/api/cards/assign"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.assignCard(std::stoi(f["user_id"]),f["card"]);}catch(...){}if(ok)attendance_.refreshUserMetadata();return{ok?200:400,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"Не удалось добавить карту пользователю\"}"};}
     if(r.path=="/api/cards/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=users_.removeCard(f["card"]);attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}

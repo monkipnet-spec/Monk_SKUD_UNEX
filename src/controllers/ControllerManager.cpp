@@ -74,7 +74,11 @@ std::string hexSlice(const std::vector<std::uint8_t>& data,std::size_t begin,std
     return util::hex(std::vector<std::uint8_t>(data.begin()+static_cast<std::ptrdiff_t>(begin),data.begin()+static_cast<std::ptrdiff_t>(end)));
 }
 }
-ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){}
+ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){
+    const auto root=std::filesystem::path(path_).parent_path().parent_path();
+    controller_cards_path_=(root/"data"/"controller_cards.csv").string();
+    loadControllerCards();
+}
 ControllerManager::~ControllerManager(){stop();}
 bool ControllerManager::loadControllers(){std::lock_guard lk(mu_);controllers_.clear();std::ifstream f(path_);if(!f)return false;std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()<4)continue;try{Controller x;x.node=std::stoi(c[0]);x.name=c[1];x.model=c[2];x.enabled=c[3]!="0";controllers_.push_back(x);}catch(...){}}return true;}
 bool ControllerManager::saveControllers()const{std::lock_guard lk(mu_);std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp);if(!f)return false;f<<"node;name;model;enabled\n";for(auto&x:controllers_)f<<x.node<<';'<<x.name<<';'<<x.model<<';'<<(x.enabled?1:0)<<"\n";f.close();std::error_code ec;std::filesystem::rename(tmp,path_,ec);if(ec){std::filesystem::remove(path_,ec);ec.clear();std::filesystem::rename(tmp,path_,ec);}return !ec;}
@@ -85,6 +89,44 @@ bool ControllerManager::renameController(int node,const std::string&name){{std::
 std::string ControllerManager::serialStatus()const{std::lock_guard lk(mu_);return serial_status_;}
 std::string ControllerManager::serialDevice()const{std::lock_guard lk(mu_);return serial_device_;}
 void ControllerManager::setRawEventCallback(RawEventFn fn){std::lock_guard lk(mu_);raw_cb_=std::move(fn);}
+
+bool ControllerManager::loadControllerCards(){
+    std::lock_guard lk(card_mu_);controller_cards_.clear();std::ifstream f(controller_cards_path_);if(!f)return false;
+    std::string line;bool first=true;while(std::getline(f,line)){
+        if(first){first=false;continue;}if(util::trim(line).empty())continue;auto c=util::split(line,';');if(c.size()<7)continue;
+        try{
+            ControllerCardRecord x;x.card=c[0];x.controller_node=std::stoi(c[1]);x.controller_name=c[2];x.first_seen=c[3];x.last_seen=c[4];x.read_count=static_cast<std::uint64_t>(std::stoull(c[5]));x.last_raw_hex=c[6];
+            std::uint16_t series=0,number=0;if(!util::parseCardId(x.card,series,number,nullptr))continue;x.card=util::formatCardId(series,number);
+            controller_cards_[std::to_string(x.controller_node)+"|"+x.card]=std::move(x);
+        }catch(...){}
+    }return true;
+}
+
+bool ControllerManager::saveControllerCards()const{
+    std::lock_guard lk(card_mu_);const auto path=std::filesystem::path(controller_cards_path_);std::filesystem::create_directories(path.parent_path());const auto tmp=controller_cards_path_+".tmp";std::ofstream f(tmp,std::ios::trunc);if(!f)return false;
+    auto safe=[](std::string v){for(char&c:v)if(c==';'||c=='\n'||c=='\r')c=' ';return v;};
+    f<<"card;controller_node;controller_name;first_seen;last_seen;read_count;last_raw_hex\n";
+    for(const auto&[_,x]:controller_cards_)f<<safe(x.card)<<';'<<x.controller_node<<';'<<safe(x.controller_name)<<';'<<safe(x.first_seen)<<';'<<safe(x.last_seen)<<';'<<x.read_count<<';'<<safe(x.last_raw_hex)<<"\n";
+    f.close();std::error_code ec;std::filesystem::rename(tmp,controller_cards_path_,ec);if(ec){std::filesystem::remove(controller_cards_path_,ec);ec.clear();std::filesystem::rename(tmp,controller_cards_path_,ec);}return !ec;
+}
+
+std::vector<ControllerCardRecord> ControllerManager::controllerCards()const{
+    std::lock_guard lk(card_mu_);std::vector<ControllerCardRecord> out;out.reserve(controller_cards_.size());for(const auto&[_,x]:controller_cards_)out.push_back(x);
+    std::sort(out.begin(),out.end(),[](const auto&a,const auto&b){if(a.last_seen!=b.last_seen)return a.last_seen>b.last_seen;if(a.controller_node!=b.controller_node)return a.controller_node<b.controller_node;return a.card<b.card;});return out;
+}
+
+void ControllerManager::clearControllerCards(){
+    {std::lock_guard lk(card_mu_);controller_cards_.clear();}
+    saveControllerCards();
+}
+
+void ControllerManager::rememberControllerCard(const std::string& card,int node,const std::string& controller_name,const std::string& raw_hex){
+    std::uint16_t series=0,number=0;if(!util::parseCardId(card,series,number,nullptr))return;const auto canonical=util::formatCardId(series,number);const auto now=util::nowLocal();
+    {
+        std::lock_guard lk(card_mu_);const auto key=std::to_string(node)+"|"+canonical;auto&x=controller_cards_[key];if(x.card.empty()){x.card=canonical;x.controller_node=node;x.first_seen=now;}x.controller_name=controller_name;x.last_seen=now;++x.read_count;x.last_raw_hex=raw_hex;
+    }
+    saveControllerCards();
+}
 void ControllerManager::appendProtocolTrace(std::string direction,int node,int command,std::string protocol,const std::vector<std::uint8_t>&frame,std::string message,std::string card,int user_address){
     ProtocolTraceEntry e;e.timestamp=traceTimestamp();e.direction=std::move(direction);e.node=node;e.command=command;e.protocol=std::move(protocol);e.raw_hex=util::hex(frame);e.message=std::move(message);e.card=std::move(card);e.user_address=user_address;
     std::lock_guard lk(trace_mu_);e.id=next_trace_id_++;trace_entries_.push_back(std::move(e));while(trace_entries_.size()>1000)trace_entries_.pop_front();
@@ -479,7 +521,18 @@ void ControllerManager::loop(){
                     }
                 }
                 if(cb)cb(*evt);
-                if(!evt->card.empty())attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);
+                if(!evt->card.empty()){
+                    // v0.3.4 card onboarding: every confirmed real 25H card is kept in
+                    // a persistent controller inventory, independent of attendance.
+                    rememberControllerCard(evt->card,node,cname,evt->raw_hex);
+                    if(cfg_.getBool("cards.auto_create_unknown",false)&&!users_.byCard(evt->card)){
+                        if(auto created=users_.ensureUserForCard(evt->card)){
+                            attendance_.refreshUserMetadata();
+                            appendProtocolTrace("INFO",node,0x25,"semantic",{},"Новая карта автоматически добавлена как пользователь №"+std::to_string(created->id),evt->card);
+                        }
+                    }
+                    attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);
+                }
 
                 // 25H always returns the oldest FIFO record.  It must be removed after
                 // being copied locally, otherwise the same record hides every newer card

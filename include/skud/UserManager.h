@@ -18,6 +18,9 @@ public:
     bool erase(int id);
     int eraseMany(const std::vector<int>& ids);
     bool assignCard(int id,const std::string&card);
+    // Return an existing owner for card or create a placeholder local user.
+    // The placeholder can be edited normally afterwards.
+    std::optional<User> ensureUserForCard(const std::string& card);
     bool removeCard(const std::string&card);
     bool renameDepartment(const std::string& old_name,const std::string& new_name);
     bool departmentInUse(const std::string& name) const;
