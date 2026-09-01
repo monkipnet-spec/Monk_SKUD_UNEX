@@ -161,3 +161,15 @@ v0.3.8
 - PASS: H-series 20H frame test exactly matches SOYAL documented sample: 7E 08 01 20 00 16 01 20 E9 41
 - PASS: pseudo-TTY 20H ACK + automatic 12H read-back verifies written byte and returns ok
 - SAFETY: legacy Extended 0x84 user write is removed from executable path; user-level write remains blocked until H-series user EEPROM addresses/layout are confirmed on hardware
+
+
+v0.3.9
+- PASS: clean Release build ([100%] Built target monk-skud-unex)
+- PASS: node --check web/app.js
+- PASS: scripts/setup_mariadb.sh syntax check
+- PASS: user upload is enabled with standard 0x7E command 84H; no Extended 0x84 call exists in writeUser()
+- PASS: pseudo-TTY chain for known Address 7: pre-read 87H -> 84H -> ACK -> post-read 87H
+- PASS: generated 84H frame for node 2 / address 7 / card 112:53910 / PIN 0031 / card-only: 7E 1F 02 84 01 00 07 00 00 00 00 00 70 D2 96 00 00 00 1F 58 00 FF FF 63 0C 1F 00 00 00 00 00 7C E5
+- PASS: compact 8B before/after RAW is not falsely decoded; successful ACK+87H returns ok_unverified and UI displays «Записан — проверить картой»
+- SAFETY: 87H must succeed before 84H is sent; post-write 87H is mandatory; deleteUser remains blocked until real hardware write validation
+- HARDWARE REQUIRED: first production test must use one known slot/card and verify a physical card pass before bulk upload
