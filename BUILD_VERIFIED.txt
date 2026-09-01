@@ -133,3 +133,11 @@ v0.3.5 SOYAL 701Client import:
 - Auto-match by unique `controller_port == SOYAL Address` adds a second card without replacing the existing card: PASS.
 - Address 0 excluded from automatic port matching because local 0 means «not specified».
 - Web preview/manual assign/create/bulk auto/bulk create UI cache revision v=035.
+
+v0.3.6
+- PASS: clean Release build with libmariadb
+- PASS: web/app.js syntax check
+- PASS: setup_mariadb.sh bash syntax check
+- PASS: legacy FILE mode still creates users.csv on first start
+- PASS: MariaDB schema/migration code compiles and links against libmariadb
+- SAFETY: users.csv is removed only after DB write + read-back verification and backup copy

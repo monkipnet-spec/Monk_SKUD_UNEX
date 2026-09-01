@@ -1,9 +1,13 @@
 #include "skud/UserManager.h"
+#include "skud/Config.h"
+#include "skud/MariaDbUserStore.h"
 #include "skud/Util.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#include <iomanip>
 #include <sstream>
 
 namespace skud {
@@ -122,15 +126,63 @@ bool removeCardFromUser(User& u,const std::string& card){
 }
 }
 
-UserManager::UserManager(std::string path):path_(std::move(path)){}
+UserManager::UserManager(std::string path,Config* cfg):path_(std::move(path)),cfg_(cfg){}
+UserManager::~UserManager()=default;
+
 bool UserManager::load(){
-    std::lock_guard lk(mu_);users_.clear();std::ifstream f(path_);if(!f)return false;
-    std::string line;bool first=true;while(std::getline(f,line)){if(first){first=false;continue;}if(util::trim(line).empty())continue;User u;if(decodeRow(util::split(line,';'),u))users_.push_back(std::move(u));}return true;
+    auto readCsv=[&](std::vector<User>& out)->bool{
+        std::ifstream f(path_);if(!f)return false;std::string line;bool first=true;
+        while(std::getline(f,line)){if(first){first=false;continue;}if(util::trim(line).empty())continue;User u;if(decodeRow(util::split(line,';'),u))out.push_back(std::move(u));}
+        return true;
+    };
+    const bool db_enabled=cfg_&&cfg_->getBool("database.enabled",false);
+    if(!db_enabled){std::vector<User> tmp;if(!readCsv(tmp))return false;std::lock_guard lk(mu_);users_=std::move(tmp);return true;}
+
+    db_=std::make_unique<MariaDbUserStore>(*cfg_);std::string err;
+    if(!db_->init(err)){std::lock_guard sl(storage_mu_);storage_error_=err;return false;}
+    std::vector<User> db_users;
+    if(!db_->load(db_users,err)){std::lock_guard sl(storage_mu_);storage_error_=err;return false;}
+
+    std::vector<User> csv_users;const bool csv_exists=readCsv(csv_users);
+    if(csv_exists&&cfg_->getBool("database.migrate_users_csv",true)){
+        bool migrate=false;
+        if(db_users.empty()&&!csv_users.empty())migrate=true;
+        else if(!csv_users.empty()){
+            // Only remove an old CSV automatically when every CSV user/card is already represented in MariaDB.
+            migrate=std::all_of(csv_users.begin(),csv_users.end(),[&](const User& cu){
+                auto it=std::find_if(db_users.begin(),db_users.end(),[&](const User&du){return du.id==cu.id;});if(it==db_users.end())return false;
+                return std::all_of(cu.cards.begin(),cu.cards.end(),[&](const std::string&card){return userHasCard(*it,card);});
+            });
+        }else migrate=true;
+
+        if(db_users.empty()&&!csv_users.empty()){
+            if(!db_->save(csv_users,err)){std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB migration failed: "+err;return false;}
+            std::vector<User> verify;if(!db_->load(verify,err)||verify.size()!=csv_users.size()){
+                std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB verification failed: "+err;return false;
+            }
+            db_users=std::move(verify);migrate=true;
+        }
+        if(migrate&&cfg_->getBool("database.remove_csv_after_migration",true)){
+            std::error_code ec;auto backup_dir=std::filesystem::path(path_).parent_path().parent_path()/"backup";std::filesystem::create_directories(backup_dir,ec);
+            if(!ec&&std::filesystem::exists(path_)){
+                const auto now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());std::tm tm{};localtime_r(&now,&tm);std::ostringstream ts;ts<<std::put_time(&tm,"%Y%m%d-%H%M%S");
+                auto backup=backup_dir/("users.csv.pre-mariadb-"+ts.str());std::filesystem::copy_file(path_,backup,std::filesystem::copy_options::overwrite_existing,ec);
+                if(!ec)std::filesystem::remove(path_,ec);
+            }
+        }
+    }
+    {std::lock_guard lk(mu_);users_=std::move(db_users);} {std::lock_guard sl(storage_mu_);storage_error_.clear();}return true;
 }
+
 bool UserManager::save()const{
-    std::lock_guard lk(mu_);std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp,std::ios::trunc);if(!f)return false;
+    std::vector<User> snapshot;{std::lock_guard lk(mu_);snapshot=users_;}
+    if(cfg_&&cfg_->getBool("database.enabled",false)){
+        if(!db_){std::lock_guard sl(storage_mu_);storage_error_="MariaDB backend is not initialized";return false;}
+        std::string err;if(!db_->save(snapshot,err)){std::lock_guard sl(storage_mu_);storage_error_=err;return false;}{std::lock_guard sl(storage_mu_);storage_error_.clear();}return true;
+    }
+    std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp,std::ios::trunc);if(!f)return false;
     f<<"id;enabled;last_name;first_name;middle_name;department;position;card;card_series;card_number;pin_code;access_mode;controller_port;valid_from;valid_until;telegram_arrival;telegram_departure;cards\n";
-    for(const auto&u:users_)f<<row(u)<<"\n";
+    for(const auto&u:snapshot)f<<row(u)<<"\n";
     f.close();std::error_code ec;std::filesystem::rename(tmp,path_,ec);if(ec){std::filesystem::remove(path_,ec);ec.clear();std::filesystem::rename(tmp,path_,ec);}return !ec;
 }
 std::vector<User>UserManager::list()const{std::lock_guard lk(mu_);return users_;}
@@ -213,4 +265,13 @@ bool UserManager::importCsv(const std::string&csv,std::string&err){
     std::vector<User> n;std::istringstream f(csv);std::string line;bool first=true;int ln=0;while(std::getline(f,line)){++ln;if(first){first=false;continue;}if(util::trim(line).empty())continue;User u;if(!decodeRow(util::split(line,';'),u)){err="bad CSV at line "+std::to_string(ln);return false;}n.push_back(std::move(u));}
     {std::lock_guard lk(mu_);users_=std::move(n);}return save();
 }
+
+
+bool UserManager::usingMariaDb()const{return cfg_&&cfg_->getBool("database.enabled",false);}
+std::string UserManager::storageStatus()const{
+    if(!usingMariaDb())return "FILE CSV";
+    if(db_)return db_->status();
+    std::lock_guard sl(storage_mu_);return storage_error_.empty()?"MariaDB not initialized":"ERROR: "+storage_error_;
+}
+std::string UserManager::storageError()const{std::lock_guard sl(storage_mu_);return storage_error_;}
 }

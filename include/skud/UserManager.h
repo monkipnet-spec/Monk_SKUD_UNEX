@@ -1,14 +1,18 @@
 #pragma once
 #include "skud/Types.h"
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace skud {
+class Config;
+class MariaDbUserStore;
 class UserManager {
 public:
-    explicit UserManager(std::string path);
+    explicit UserManager(std::string path, Config* cfg=nullptr);
+    ~UserManager();
     bool load();
     bool save() const;
     std::vector<User> list() const;
@@ -27,8 +31,15 @@ public:
     std::vector<std::string> usedDepartments() const;
     std::string exportCsv() const;
     bool importCsv(const std::string& csv, std::string& error);
+    bool usingMariaDb() const;
+    std::string storageStatus() const;
+    std::string storageError() const;
 private:
     std::string path_;
+    Config* cfg_{};
+    std::unique_ptr<MariaDbUserStore> db_;
+    mutable std::mutex storage_mu_;
+    mutable std::string storage_error_;
     mutable std::mutex mu_;
     std::vector<User> users_;
 };

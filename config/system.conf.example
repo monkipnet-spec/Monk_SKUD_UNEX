@@ -23,3 +23,14 @@ reports.schedule.weekday=1
 reports.schedule.month_day=1
 auth.username=admin
 # auth.salt and auth.password_hash are generated at first start
+
+# MariaDB user storage. Run scripts/setup_mariadb.sh first, then restart.
+database.enabled=false
+database.host=127.0.0.1
+database.port=3306
+database.name=monk_skud_unex
+database.user=monk_skud
+database.password=
+database.auto_create=true
+database.migrate_users_csv=true
+database.remove_csv_after_migration=true

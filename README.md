@@ -377,3 +377,26 @@ v0.2.9 также исправляет диагностическое отобр
 Новые API:
 - `POST /api/import/soyal/preview?type=usr|txt` — бинарный/raw preview без изменения базы;
 - `POST /api/import/soyal/apply-record` — `auto`, `assign` или `create` для одной предварительно разобранной записи.
+
+## v0.3.6 — MariaDB user storage and automatic CSV migration
+
+Users can now be stored in MariaDB instead of `config/users.csv`.
+
+Quick setup on Ubuntu:
+
+```bash
+sudo bash scripts/setup_mariadb.sh /home/monk/Monk_SKUD_UNEX
+```
+
+The setup script installs MariaDB/client development files when needed, creates the `monk_skud_unex` database and a dedicated `monk_skud` account with a generated password, and enables the database backend in `config/system.conf`.
+
+On the first daemon start with `database.enabled=true` the application:
+
+1. creates/updates its MariaDB schema (`skud_users`, `skud_user_cards`, `skud_meta`);
+2. reads the existing `config/users.csv` when the DB is empty;
+3. writes all users and all cards to MariaDB inside a transaction;
+4. reads the records back and verifies the user count;
+5. copies the old CSV to `backup/users.csv.pre-mariadb-YYYYMMDD-HHMMSS`;
+6. removes `config/users.csv` only after successful migration and verification.
+
+If MariaDB initialization or migration fails, the daemon stops and the CSV is not deleted. `RuntimeBootstrap` no longer recreates `users.csv` in MariaDB mode. CSV export/import remains available through the web UI as an interchange/backup format, but MariaDB is the active user storage.

@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.3.5 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.3.6 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+find_path(MARIADB_INCLUDE_DIR mariadb/mysql.h REQUIRED)
+find_library(MARIADB_LIBRARY NAMES mariadb REQUIRED)
 
 # Embed the current web UI into the executable. RuntimeBootstrap writes these
 # files into an empty working directory on the first start.
@@ -31,6 +33,7 @@ add_executable(monk-skud-unex
   src/utils/Util.cpp
   src/system/SystemMetrics.cpp
   src/storage/FileStore.cpp
+  src/storage/MariaDbUserStore.cpp
   src/runtime/RuntimeBootstrap.cpp
   src/users/UserManager.cpp
   src/import/SoyalImport.cpp
@@ -43,8 +46,8 @@ add_executable(monk-skud-unex
   src/reports/ReportManager.cpp
   src/web/WebServer.cpp
 )
-target_include_directories(monk-skud-unex PRIVATE include "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(monk-skud-unex PRIVATE OpenSSL::Crypto Threads::Threads)
+target_include_directories(monk-skud-unex PRIVATE include "${CMAKE_BINARY_DIR}/generated" "${MARIADB_INCLUDE_DIR}")
+target_link_libraries(monk-skud-unex PRIVATE OpenSSL::Crypto Threads::Threads "${MARIADB_LIBRARY}")
 target_compile_options(monk-skud-unex PRIVATE -Wall -Wextra -Wpedantic)
 
 # Keep the web UI next to the binary as well as in the source tree.
