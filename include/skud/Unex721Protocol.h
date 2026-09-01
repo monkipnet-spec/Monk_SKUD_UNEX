@@ -66,6 +66,7 @@ public:
     static std::string userWriteSupportMessage();
     UserWriteOutcome writeUser(std::uint8_t node,const User& user);
     UserWriteOutcome clearAllUsers(std::uint8_t node);
+    UserWriteOutcome disablePassAnyCards(std::uint8_t node);
     UserWriteOutcome clearUserSlot(std::uint8_t node,int address);
     UserWriteOutcome deleteUser(std::uint8_t node,const User& user);
     UserReadOutcome readUser(std::uint8_t node,int address);

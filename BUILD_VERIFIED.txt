@@ -1,3 +1,9 @@
+Monk_SKUD_UNEX v0.3.16
+- Full sync preflight: EEPROM 0x0016 bit 0x20 is cleared through 20H and verified by 12H.
+- Every absent H-series address 0..1023 is forcibly rewritten by 83H zeros and verified by 87H, even when pre-read would look empty.
+- Web range checks accept Address 0; full-sync warning no longer mentions 85H.
+- Cache revision v=0316.
+
 Monk_SKUD_UNEX v0.3.15
 Release build: PASS
 web/app.js syntax: PASS

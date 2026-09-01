@@ -348,11 +348,11 @@ WebServer::Res WebServer::route(const Req&r){
         auto allu=users_.list();
         if(all_users){
             // Full synchronization rebuilds the controller from active local users only.
-            // Disabled local users intentionally stay absent after 85H clear.
+            // Disabled local users intentionally stay absent after verified 83H reconciliation.
             for(const auto&u:allu)if(u.enabled)selected_users.push_back(u);
 
-            // Because 85H is destructive, refuse to clear a controller unless the
-            // local dataset is internally safe to rebuild: every active user must
+            // Refuse full synchronization unless the local dataset is internally
+            // safe to rebuild: every active user must
             // have a valid H-series address/card and addresses must be unique.
             std::map<int,int> address_owner;
             for(const auto&u:selected_users){

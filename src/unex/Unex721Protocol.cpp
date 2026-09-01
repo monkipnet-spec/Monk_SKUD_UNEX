@@ -230,6 +230,30 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,c
     return{true,"written_verified",m.str()};
 }
 
+Unex721Protocol::UserWriteOutcome Unex721Protocol::disablePassAnyCards(std::uint8_t node){
+    // AR-721H H-series compound command 24* is stored in EEPROM address 0x16
+    // ("Assigned function setting").  Current SOYAL H-series documentation
+    // assigns weighted value 032 / bit 5 to "swipe any tags to release door open".
+    // Preserve every other option and clear only bit 0x20.  Always rewrite the
+    // byte even when the bit already reads as zero: some UNEX-compatible
+    // firmware keeps an access index/cache that is refreshed only after a write.
+    auto before=readEeprom(node,0x0016,1);
+    if(!before.ok||before.data.size()!=1)
+        return{false,"pass_any_read_failed","Не удалось прочитать EEPROM 0x0016 (параметр 24*): "+before.message};
+
+    const std::uint8_t old_value=before.data[0];
+    const std::uint8_t new_value=static_cast<std::uint8_t>(old_value & static_cast<std::uint8_t>(~0x20u));
+    auto wr=writeEeprom(node,0x0016,{new_value});
+    if(!wr.ok)
+        return{false,"pass_any_write_failed","Не удалось отключить 'любая карта': было 24*="+std::to_string(old_value)+", нужно "+std::to_string(new_value)+". "+wr.message};
+
+    std::ostringstream m;
+    m<<"Pass Any Cards отключён: EEPROM 0x0016 / 24* "
+     <<static_cast<int>(old_value)<<" -> "<<static_cast<int>(new_value)
+     <<" (снят bit 0x20), подтверждено 12H read-back";
+    return{true, old_value==new_value?"pass_any_rewritten_disabled":"pass_any_disabled", m.str()};
+}
+
 Unex721Protocol::UserWriteOutcome Unex721Protocol::clearAllUsers(std::uint8_t node){
     // AR-721H/727H Protocol v1.2, command 85H: Clearing All Card Content.
     // The manual notes that processing can take about 10 seconds, so use a
@@ -247,19 +271,12 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::clearUserSlot(std::uint8_t no
     if(address<0||address>1023)
         return{false,"clear_slot_invalid","Для AR-721H/727H допустимый User Address 0..1023"};
 
-    // Deterministic full-sync cleanup.  Do not rely on 85H: read the slot,
-    // and if any bytes remain, overwrite the complete official 8-byte 83H
-    // record with zeros (Site/Card/PIN/Mode/Zone) and verify exact zeros via 87H.
-    auto before=readUser(node,address);
-    if(!before.ok)
-        return{false,"clear_slot_read_failed","Не удалось прочитать User Address "+std::to_string(address)+" через 87H: "+before.message};
-    if(before.raw_record.size()!=8)
-        return{false,"clear_slot_unsupported","Ожидалась официальная 8B запись 87H, получено "+std::to_string(before.raw_record.size())+"B: "+before.raw_record_hex};
-
+    // Full synchronization must actively rewrite every absent address, even if
+    // 87H already returns eight zero bytes.  Real UNEX 721 hardware has been
+    // observed to report 87H(1023)=zeros while still granting an old card as
+    // Normal Access user=1023.  A real 83H write is therefore required to make
+    // the controller rebuild/refresh its internal access entry for the slot.
     const std::vector<std::uint8_t> zeros(8,0x00);
-    if(before.raw_record==zeros)
-        return{true,"slot_already_empty","User Address "+std::to_string(address)+" уже пуст"};
-
     const auto a=static_cast<std::uint16_t>(address);
     std::vector<std::uint8_t> payload={
         static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF)
@@ -267,21 +284,19 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::clearUserSlot(std::uint8_t no
     payload.insert(payload.end(),zeros.begin(),zeros.end());
 
     auto ack=transact(node,0x83,payload,500);
-    if(!ack)return{false,"clear_slot_timeout","Нет ответа на 83H при очистке User Address "+std::to_string(address)};
+    if(!ack)return{false,"clear_slot_timeout","Нет ответа на 83H при принудительной очистке User Address "+std::to_string(address)};
     if(ack->size()<6)return{false,"clear_slot_error","Короткий ответ на 83H: "+util::hex(*ack)};
     if((*ack)[3]==NACK)return{false,"clear_slot_nack","Контроллер вернул NACK на 83H при очистке User Address "+std::to_string(address)+": "+util::hex(*ack)};
     if((*ack)[3]!=ACK)return{false,"clear_slot_error","Неожиданный ответ 83H при очистке User Address "+std::to_string(address)+": "+util::hex(*ack)};
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    std::this_thread::sleep_for(std::chrono::milliseconds(45));
     auto after=readUser(node,address);
     if(!after.ok||after.raw_record.size()!=8)
         return{false,"clear_slot_verify_failed","83H ACK получен, но контрольный 87H после очистки не удался для User Address "+std::to_string(address)};
     if(after.raw_record!=zeros)
         return{false,"clear_slot_verify_failed","83H ACK получен, но User Address "+std::to_string(address)+" не очищен. Ожидалось 00 00 00 00 00 00 00 00, получено="+after.raw_record_hex};
 
-    std::ostringstream m;
-    m<<"User Address "<<address<<" очищен 83H и подтверждён 87H; было RAW="<<before.raw_record_hex;
-    return{true,"slot_cleared_verified",m.str()};
+    return{true,"slot_cleared_verified","User Address "+std::to_string(address)+" принудительно записан нулями через 83H и подтверждён 87H"};
 }
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){

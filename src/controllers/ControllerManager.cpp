@@ -178,7 +178,7 @@ std::uint64_t ControllerManager::queueUserUpload(std::vector<User>users,std::vec
     const auto id=next_upload_id_++;
     ControllerUserUploadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.full_sync=full_sync;
     job.total=full_sync
-        ? static_cast<int>(1024*controller_nodes.size())
+        ? static_cast<int>(1025*controller_nodes.size())
         : static_cast<int>(users.size()*controller_nodes.size());
     if(!Unex721Protocol::userWriteSupported()){
         finishBlockedUserUpload(job,users,controller_nodes);
@@ -492,17 +492,28 @@ void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
             if(!running_)return;
             const auto n=static_cast<std::uint8_t>(node);
 
+            // Phase 0: disable the H-series global "Pass Any Cards" option.
+            // When enabled the controller grants any compatible tag and logs
+            // it as Normal Access user=1023 regardless of the 83H user table.
+            auto pass_any=proto.disablePassAnyCards(n);
+            append_result(ControllerUserUploadResult{0,node,pass_any.status,pass_any.message},pass_any.ok,false,true);
+            if(!pass_any.ok){
+                std::lock_guard lk(upload_mu_);
+                auto it=upload_jobs_.find(pending.id);
+                if(it!=upload_jobs_.end()){it->second.completed+=1024;it->second.skipped+=1024;}
+                continue;
+            }
+
             // Phase 1: remove every slot that is not part of this full export.
             for(int address=0;address<=1023;++address){
                 if(desired.count(address))continue;
                 if(!running_)return;
                 auto out=proto.clearUserSlot(n,address);
-                const bool already_empty=out.status=="slot_already_empty";
                 append_result(
                     ControllerUserUploadResult{0,node,out.status,out.message},
                     out.ok,
-                    already_empty,
-                    !already_empty || !out.ok);
+                    false,
+                    !out.ok);
             }
 
             // Phase 2: write only the desired local users into their exact slots.

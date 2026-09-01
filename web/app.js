@@ -219,7 +219,7 @@ function updateReadSummary(){
         extra=a.length?`Адреса: ${a.join(', ')}`:'У пользователей не заданы адреса в контроллере.';
     }else{
         const from=Number(readRangeFrom.value)||0,to=Number(readRangeTo.value)||0;
-        if(from>=1&&to>=from&&to<=1023)addressCount=to-from+1;
+        if(from>=0&&to>=from&&to<=1023)addressCount=to-from+1;
         extra=addressCount>1000?'Большой диапазон может читаться несколько минут и более.':'Диапазон читается последовательно командой 0x87.';
     }
     readSelectionSummary.innerHTML=`Будет прочитано: <b>${addressCount}</b> адрес(ов) × <b>${controllerCount}</b> контроллер(ов) = <b>${addressCount*controllerCount}</b> операций.<br><small>${esc(extra)}</small>`;
@@ -241,7 +241,7 @@ function renderUserReadJob(job){
             ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${detailLine}</small>`
             :'—';
         const local=r.local_user_id?`${r.local_user_id} — ${esc(r.local_user_name||'')}`:'—';
-        const action=(r.controller_enabled&&r.address>=1&&r.address<=1023)
+        const action=(r.controller_enabled&&r.address>=0&&r.address<=1023)
             ?`<button class="mini danger" onclick="invalidateControllerSlot(${r.controller_node},${r.address})">Отключить слот</button>`
             :'—';
         return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td><td>${action}</td></tr>`;
@@ -339,14 +339,14 @@ function updateUploadSummary(){
     if(!window.uploadSelectionSummary)return;
     const userCount=uploadAllUsers.checked?USERS.filter(u=>u.enabled!==false).length:selectedUploadValues('.upload-user').length;
     const controllerCount=uploadAllControllers.checked?CONTROLLERS.length:selectedUploadValues('.upload-controller').length;
-    uploadSelectionSummary.textContent=uploadAllUsers.checked?`Полная синхронизация: сначала очистка ${controllerCount} контроллер(ов), затем запись ${userCount} × ${controllerCount} = ${userCount*controllerCount} пользователей.`:`Будет подготовлено записей: ${userCount} × ${controllerCount} = ${userCount*controllerCount}`;
+    uploadSelectionSummary.textContent=uploadAllUsers.checked?`Полная синхронизация: отключение режима «любая карта», затем принудительная синхронизация всех 1024 адресов на ${controllerCount} контроллер(ах) и запись ${userCount} пользователей.`:`Будет подготовлено записей: ${userCount} × ${controllerCount} = ${userCount*controllerCount}`;
 }
 document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.upload-user,.upload-controller'))updateUploadSummary();});
 
-function uploadStatusText(status){return ({ok:'Записан и проверен',written_verified:'Записан и проверен',cleared_all:'Все ячейки очищены',skipped_clear_failed:'Пропущен: очистка не подтверждена',ok_unverified:'Записан — проверить картой',skipped:'Пропущен',blocked_protocol:'Заблокировано',error:'Ошибка'})[status]||status;}
+function uploadStatusText(status){return ({ok:'Записан и проверен',written_verified:'Записан и проверен',pass_any_disabled:'«Любая карта» отключена',pass_any_rewritten_disabled:'«Любая карта» подтверждённо выключена',pass_any_read_failed:'Ошибка чтения настройки',pass_any_write_failed:'Ошибка записи настройки',slot_cleared_verified:'Слот очищен и проверен',ok_unverified:'Записан — проверить картой',skipped:'Пропущен',blocked_protocol:'Заблокировано',error:'Ошибка'})[status]||status;}
 function renderUserUploadJob(job){
     const state=({queued:'В очереди',running:'Выполняется',completed:'Завершено',blocked:'Аппаратная запись заблокирована'})[job.state]||job.state;
-    const rows=(job.results||[]).map(r=>{const u=USERS.find(x=>x.id===r.user_id);const c=CONTROLLERS.find(x=>x.node===r.controller_node);const good=['ok','written_verified','cleared_all','ok_unverified'].includes(r.status);const muted=['skipped','skipped_clear_failed'].includes(r.status);const cls=good?'ok':muted?'muted':'bad';const who=r.user_id===0?'Очистка всех ячеек':`${r.user_id} — ${esc(u?userDisplayName(u):'')}`;return `<tr><td>${who}</td><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td class="${cls}">${esc(uploadStatusText(r.status))}</td><td>${esc(r.message||'')}</td></tr>`;}).join('');
+    const rows=(job.results||[]).map(r=>{const u=USERS.find(x=>x.id===r.user_id);const c=CONTROLLERS.find(x=>x.node===r.controller_node);const good=['ok','written_verified','pass_any_disabled','pass_any_rewritten_disabled','slot_cleared_verified','ok_unverified'].includes(r.status);const muted=['skipped','skipped_clear_failed'].includes(r.status);const cls=good?'ok':muted?'muted':'bad';const who=r.user_id===0?(String(r.status||'').startsWith('pass_any_')?'Настройка контроллера':'Очистка слота'):`${r.user_id} — ${esc(u?userDisplayName(u):'')}`;return `<tr><td>${who}</td><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td class="${cls}">${esc(uploadStatusText(r.status))}</td><td>${esc(r.message||'')}</td></tr>`;}).join('');
     uploadResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · успешно ${job.success} · пропущено ${job.skipped} · ошибок/блокировок ${job.failed}</div>${rows?`<div class="upload-result-table"><table><thead><tr><th>Пользователь</th><th>Контроллер</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
 }
 
@@ -367,7 +367,7 @@ async function startUserUpload(){
     if(uploadAllUsers.checked&&!USERS.some(u=>u.enabled!==false))return alert('Нет активных пользователей для полной выгрузки');
     if(uploadAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
     const fullSync=uploadAllUsers.checked;
-    const warning=fullSync?'\n\nВНИМАНИЕ: ПОЛНАЯ ВЫГРУЗКА сначала очистит ВСЕ пользовательские ячейки выбранных контроллеров командой 85H. После очистки будут записаны только пользователи из Monk SKUD. Старые и дублирующиеся карты будут удалены.':'';
+    const warning=fullSync?'\n\nПОЛНАЯ СИНХРОНИЗАЦИЯ: сначала будет отключён глобальный режим «любая карта», затем каждый отсутствующий адрес 0..1023 будет принудительно записан нулями через 83H и проверен 87H. После этого будут записаны пользователи Monk SKUD. Операция может занять несколько минут.':'';
     if(!confirm(`Выгрузить ${fullSync?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?${warning}\n\nЗапись выполняется 83H, каждая запись проверяется контрольным 87H.`))return;
     startUploadButton.disabled=true;uploadResult.innerHTML='<div class="muted">Создание задания...</div>';
     try{
