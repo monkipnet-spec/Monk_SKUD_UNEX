@@ -87,11 +87,32 @@ bool Unex721Protocol::validExtendedFrame(const std::vector<std::uint8_t>&f){
 }
 
 std::optional<std::vector<std::uint8_t>> Unex721Protocol::transact(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout){
-    auto q=frame(node,cmd,data);if(!port_.writeAll(q))return std::nullopt;auto r=port_.readFrame(timeout);if(r.empty()||!validFrame(r))return std::nullopt;return r;
+    auto q=frame(node,cmd,data);
+    if(!port_.writeAll(q))return std::nullopt;
+    // Some USB-RS485 adapters echo transmitted bytes back to RX.  Do not
+    // mistake that echo for a controller reply; wait for the next valid frame.
+    for(int attempt=0;attempt<3;++attempt){
+        auto r=port_.readFrame(timeout);
+        if(r.empty())return std::nullopt;
+        if(!validFrame(r))continue;
+        if(r==q)continue;
+        return r;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::vector<std::uint8_t>> Unex721Protocol::transactExtended(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout){
-    auto q=extendedFrame(node,cmd,data);if(q.empty()||!port_.writeAll(q))return std::nullopt;auto r=port_.readExtendedFrame(timeout);if(r.empty()||!validExtendedFrame(r))return std::nullopt;return r;
+    auto q=extendedFrame(node,cmd,data);
+    if(q.empty()||!port_.writeAll(q))return std::nullopt;
+    // See transact(): extended packets may be locally echoed as well.
+    for(int attempt=0;attempt<3;++attempt){
+        auto r=port_.readExtendedFrame(timeout);
+        if(r.empty())return std::nullopt;
+        if(!validExtendedFrame(r))continue;
+        if(r==q)continue;
+        return r;
+    }
+    return std::nullopt;
 }
 
 bool Unex721Protocol::ping(std::uint8_t node){
@@ -161,17 +182,13 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,c
         // Read back the same user address (0x87) before reporting success.
         // This catches wiring/echo/protocol mismatches and confirms that the
         // controller actually stored the UID pair rather than only accepting a frame.
-        const std::vector<std::uint8_t> read_data={
-            static_cast<std::uint8_t>((address>>8)&0xFF),static_cast<std::uint8_t>(address&0xFF),0x01
-        };
-        auto verify=transactExtended(node,0x87,read_data,350);
-        if(!verify||verify->size()<=22)return{false,"error","Контроллер подтвердил 0x84, но чтение 0x87 для проверки не удалось"};
-        if((*verify)[7]==NACK)return{false,"error","Контроллер вернул NACK при контрольном чтении 0x87"};
-        const std::uint16_t got1=(static_cast<std::uint16_t>((*verify)[13])<<8)|(*verify)[14];
-        const std::uint16_t got2=(static_cast<std::uint16_t>((*verify)[15])<<8)|(*verify)[16];
-        const std::uint32_t got_pin=(static_cast<std::uint32_t>((*verify)[17])<<24)|(static_cast<std::uint32_t>((*verify)[18])<<16)|(static_cast<std::uint32_t>((*verify)[19])<<8)|(*verify)[20];
-        const std::uint8_t got_mode=(*verify)[21];
-        const bool enabled=got_mode>0;
+        auto verify=readUser(node,address);
+        if(!verify.ok)return{false,"error","Контроллер подтвердил 0x84, но контрольное чтение 0x87 не удалось: "+verify.message};
+        const std::uint16_t got1=verify.uid1;
+        const std::uint16_t got2=verify.uid2;
+        const std::uint32_t got_pin=verify.pin;
+        const std::uint8_t got_mode=verify.mode;
+        const bool enabled=verify.enabled;
         if(got1!=uid1||got2!=uid2||got_pin!=pin||!enabled||(got_mode&0xC0)!=(accessModeByte(user)&0xC0)){
             std::ostringstream m;m<<"Контрольное чтение не совпало: ожидалось "<<util::formatCardId(uid1,uid2)<<", получено "<<util::formatCardId(got1,got2)<<", active="<<(enabled?"1":"0")<<", PIN="<<(got_pin==pin?"OK":"DIFF")<<", mode="<<(((got_mode&0xC0)==(accessModeByte(user)&0xC0))?"OK":"DIFF");
             return{false,"error",m.str()};
@@ -216,17 +233,13 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,
         return{false,"error",m.str()};
     }
 
-    const std::vector<std::uint8_t> read_data={
-        static_cast<std::uint8_t>((address>>8)&0xFF),static_cast<std::uint8_t>(address&0xFF),0x01
-    };
-    auto verify=transactExtended(node,0x87,read_data,350);
-    if(!verify||verify->size()<=22)return{false,"error","Контроллер подтвердил удаление, но контрольное чтение 0x87 не удалось"};
-    if((*verify)[7]==NACK)return{false,"error","Контроллер вернул NACK при контрольном чтении удалённого пользователя"};
+    auto verify=readUser(node,address);
+    if(!verify.ok)return{false,"error","Контроллер подтвердил удаление, но контрольное чтение 0x87 не удалось: "+verify.message};
 
-    const std::uint16_t got1=(static_cast<std::uint16_t>((*verify)[13])<<8)|(*verify)[14];
-    const std::uint16_t got2=(static_cast<std::uint16_t>((*verify)[15])<<8)|(*verify)[16];
-    const bool enabled=(*verify)[21]>0;
-    if(enabled||got1!=0xFFFF||got2!=0xFFFF){
+    const std::uint16_t got1=verify.uid1;
+    const std::uint16_t got2=verify.uid2;
+    const bool enabled=verify.enabled;
+    if(verify.present&&(enabled||got1!=0xFFFF||got2!=0xFFFF)){
         std::ostringstream m;
         m<<"Удаление не подтверждено: адрес "<<address<<", UID "<<util::formatCardId(got1,got2)
          <<", active="<<(enabled?"1":"0");
@@ -248,17 +261,62 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
     const std::vector<std::uint8_t> read_data={
         static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF),0x01
     };
-    auto r=transactExtended(node,0x87,read_data,300);
-    if(!r){out.message="Нет корректного ответа на 0x87";return out;}
-    if(r->size()<22){out.message="Короткий ответ контроллера на 0x87";return out;}
-    if((*r)[7]==NACK){out.message="Контроллер вернул NACK на чтение 0x87";return out;}
 
-    out.uid1=(static_cast<std::uint16_t>((*r)[13])<<8)|(*r)[14];
-    out.uid2=(static_cast<std::uint16_t>((*r)[15])<<8)|(*r)[16];
-    out.pin=(static_cast<std::uint32_t>((*r)[17])<<24)|
-            (static_cast<std::uint32_t>((*r)[18])<<16)|
-            (static_cast<std::uint32_t>((*r)[19])<<8)|(*r)[20];
-    out.mode=(*r)[21];
+    // The official H-series 87H description explicitly permits both the
+    // standard 0x7E frame and the FF 00 5A A5 extended frame.  Direct RS485
+    // readers are commonly happiest with the standard frame, whereas TCP/IP
+    // bridges/libraries often use Extended Protocol.  Try both, read-only.
+    std::optional<std::vector<std::uint8_t>> r;
+    bool standard=false;
+    std::string standard_diag="таймаут/нет кадра";
+    std::string extended_diag="таймаут/нет кадра";
+
+    if(auto sr=transact(node,0x87,read_data,250)){
+        // Standard response: 7E LEN 00 03 SOURCE [24-byte user record] XOR SUM.
+        if(sr->size()<20)standard_diag="короткий кадр";
+        else if((*sr)[3]==NACK)standard_diag="NACK";
+        else if((*sr)[3]!=0x03){
+            std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*sr)[3]);standard_diag=d.str();
+        }else{
+            r=std::move(sr);standard=true;standard_diag="OK";
+        }
+    }
+    if(!r){
+        if(auto er=transactExtended(node,0x87,read_data,350)){
+            // Extended response: FF 00 5A A5 LEN_H LEN_L 00 03 SOURCE [record] XOR SUM.
+            if(er->size()<24)extended_diag="короткий кадр";
+            else if((*er)[7]==NACK)extended_diag="NACK";
+            else if((*er)[7]!=0x03){
+                std::ostringstream d;d<<"функция 0x"<<std::hex<<std::uppercase<<static_cast<int>((*er)[7]);extended_diag=d.str();
+            }else{
+                r=std::move(er);standard=false;extended_diag="OK";
+            }
+        }
+    }
+    if(!r){
+        out.message="Нет корректного ответа на 0x87: 0x7E="+standard_diag+", Extended="+extended_diag;
+        return out;
+    }
+
+    // Both response formats contain the same 24-byte user-parameter record;
+    // only the header before that record differs by four bytes.
+    const std::size_t uid1_hi=standard?9:13;
+    const std::size_t uid1_lo=uid1_hi+1;
+    const std::size_t uid2_hi=uid1_hi+2;
+    const std::size_t uid2_lo=uid1_hi+3;
+    const std::size_t pin0=uid1_hi+4;
+    const std::size_t mode_i=uid1_hi+8;
+    if(r->size()<=mode_i+2){
+        out.message=standard?"Короткий стандартный ответ контроллера на 0x87":"Короткий Extended-ответ контроллера на 0x87";
+        return out;
+    }
+
+    out.uid1=(static_cast<std::uint16_t>((*r)[uid1_hi])<<8)|(*r)[uid1_lo];
+    out.uid2=(static_cast<std::uint16_t>((*r)[uid2_hi])<<8)|(*r)[uid2_lo];
+    out.pin=(static_cast<std::uint32_t>((*r)[pin0])<<24)|
+            (static_cast<std::uint32_t>((*r)[pin0+1])<<16)|
+            (static_cast<std::uint32_t>((*r)[pin0+2])<<8)|(*r)[pin0+3];
+    out.mode=(*r)[mode_i];
     out.enabled=out.mode>0;
     out.present=!(out.mode==0&&out.uid1==0xFFFF&&out.uid2==0xFFFF);
     out.access_mode=accessModeFromByte(out.mode);
@@ -271,10 +329,10 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
          <<", "<<(out.enabled?"активен":"отключен")
          <<", PIN "<<(out.pin?"задан":"нет");
     }
+    m<<" ["<<(standard?"0x7E":"Extended")<<"]";
     out.message=m.str();
     return out;
 }
-
 
 RawUnexEvent Unex721Protocol::decodeEvent(std::uint8_t node,const std::vector<std::uint8_t>&f)const{
     RawUnexEvent e;e.node=node;e.frame=f;e.raw_hex=util::hex(f);for(std::size_t i=2;i+2<f.size();++i)if(f[i]==0x0B){e.event_code=0x0B;break;}return e;

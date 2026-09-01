@@ -6,7 +6,7 @@ v0.2.6 controller user readback:
 - Local-address mode and arbitrary 1..16383 range mode: PASS.
 - Read jobs are processed in small ControllerManager batches to preserve normal polling: PASS.
 - PIN value is used only for internal comparison and is not exposed by the readback JSON/UI: PASS.
-- Web UI cache revision: v=026.
+- Web UI cache revision: v=027.
 
 v0.2.5 attendance reports / Telegram schedule:
 - Clean Release build: PASS ([100%] Built target monk-skud-unex).
@@ -43,3 +43,8 @@ v0.2.3 decimal card series correction:
 
 Hardware note:
 - Actual UNEX 721 hardware validation remains required before production bulk changes.
+
+v0.2.7 RS485 87H compatibility:
+- Standard 0x7E request/response readback test: PASS.
+- Extended Protocol readback fallback test: PASS.
+- Local TX echo ignored before real controller response: PASS.
