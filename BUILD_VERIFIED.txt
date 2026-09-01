@@ -118,3 +118,18 @@ v0.3.4 persistent real-card inventory / onboarding workflow:
 - Controller-card auto-create setting GET/POST persistence: PASS.
 - POST /api/cards/controller/clear clears only controller card catalog and leaves users intact: PASS.
 - data/controller_cards.csv runtime bootstrap + Git ignore: PASS.
+
+v0.3.5 SOYAL 701Client import:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- JavaScript syntax check (`node --check web/app.js`): PASS.
+- Actual supplied `base.usr`: 16,400,000 bytes = 50,000 × 328 byte records: PASS.
+- `base.usr` parser: 50 populated records / 49,950 empty slots: PASS.
+- Actual user address 5 -> 40:32010, PIN 1234, Хилькевич Павел Маркович: PASS.
+- Actual user address 7 -> 112:53910, PIN 0031, Лукомский Виталий Владимирович: PASS.
+- Windows-1251 name conversion to UTF-8: PASS.
+- Actual supplied `UserCard.txt`: valid SOYAL fixed-column header; 101 default empty slots correctly skipped: PASS.
+- HTTP raw 16.4 MB `.usr` upload to `/api/import/soyal/preview?type=usr`: PASS.
+- HTTP create from SOYAL record preserves card, PIN, FIO and controller Address: PASS.
+- Auto-match by unique `controller_port == SOYAL Address` adds a second card without replacing the existing card: PASS.
+- Address 0 excluded from automatic port matching because local 0 means «not specified».
+- Web preview/manual assign/create/bulk auto/bulk create UI cache revision v=035.

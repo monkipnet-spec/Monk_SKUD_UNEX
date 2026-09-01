@@ -4,6 +4,7 @@
 #include "skud/ControllerManager.h"
 #include "skud/DepartmentManager.h"
 #include "skud/ReportManager.h"
+#include "skud/SoyalImport.h"
 #include "skud/TelegramNotifier.h"
 #include "skud/UserManager.h"
 #include "skud/Util.h"
@@ -37,7 +38,38 @@ static bool parseCardList(std::string text,std::vector<std::string>&out,std::str
     }
     return true;
 }
-void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.find("\r\n\r\n")==std::string::npos&&data.size()<65536){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0){close(fd);return;}data.append(buf,n);}auto hp=data.find("\r\n\r\n");std::string head=data.substr(0,hp),body=data.substr(hp+4);std::istringstream hs(head);std::string line;Req r;if(!std::getline(hs,line)){close(fd);return;}if(!line.empty()&&line.back()=='\r')line.pop_back();std::istringstream l1(line);std::string target,ver;l1>>r.method>>target>>ver;auto q=target.find('?');r.path=q==std::string::npos?target:target.substr(0,q);r.query=q==std::string::npos?"":target.substr(q+1);while(std::getline(hs,line)){if(!line.empty()&&line.back()=='\r')line.pop_back();auto p=line.find(':');if(p!=std::string::npos)r.headers[lower(util::trim(line.substr(0,p)))]=util::trim(line.substr(p+1));}size_t cl=0;try{cl=std::stoul(r.headers["content-length"]);}catch(...){}while(body.size()<cl){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0)break;body.append(buf,n);}r.body=body.substr(0,cl);auto res=route(r);std::ostringstream out;std::string reason=res.code==200?"OK":res.code==302?"Found":res.code==401?"Unauthorized":res.code==404?"Not Found":"Bad Request";out<<"HTTP/1.1 "<<res.code<<' '<<reason<<"\r\nContent-Type: "<<res.type<<"\r\nContent-Length: "<<res.body.size()<<"\r\nConnection: close\r\n";for(auto&h:res.headers)out<<h.first<<": "<<h.second<<"\r\n";out<<"\r\n"<<res.body;auto s=out.str();send(fd,s.data(),s.size(),MSG_NOSIGNAL);close(fd);}
+
+static std::string localUserName(const User&u){
+    std::string n=u.last_name;
+    if(!u.first_name.empty()){if(!n.empty())n+=' ';n+=u.first_name;}
+    if(!u.middle_name.empty()){if(!n.empty())n+=' ';n+=u.middle_name;}
+    return n.empty()?("Пользователь №"+std::to_string(u.id)):n;
+}
+
+static std::optional<User> uniqueUserByControllerPort(UserManager&users,int address){
+    if(address<=0)return std::nullopt;std::optional<User> found;
+    for(const auto&u:users.list())if(u.controller_port==address){if(found)return std::nullopt;found=u;}
+    return found;
+}
+
+static void mergeSoyalFields(User&u,const SoyalImportRecord&r){
+    if(u.last_name.empty())u.last_name=r.last_name;
+    if(u.first_name.empty())u.first_name=r.first_name;
+    if(u.middle_name.empty())u.middle_name=r.middle_name;
+    if(u.department.empty())u.department=r.department;
+    if(u.position.empty())u.position=r.position;
+    if(u.pin_code.empty()&&!r.pin_code.empty())u.pin_code=r.pin_code;
+    if(u.controller_port==0&&r.address>=0&&r.address<=16383)u.controller_port=r.address;
+}
+
+static SoyalImportRecord soyalRecordFromForm(const std::map<std::string,std::string>&f){
+    SoyalImportRecord r;try{r.address=std::stoi(f.at("address"));}catch(...){r.address=0;}
+    auto get=[&](const char*k)->std::string{auto it=f.find(k);return it==f.end()?std::string{}:it->second;};
+    r.card=util::trim(get("card"));r.pin_code=util::trim(get("pin_code"));r.last_name=get("last_name");r.first_name=get("first_name");r.middle_name=get("middle_name");r.department=get("department");r.position=get("position");r.full_name=get("full_name");r.source=get("source");
+    std::uint16_t series=0,number=0;if(!r.card.empty()&&util::parseCardId(r.card,series,number,nullptr)){r.card_series=series;r.card_number=number;r.card=util::formatCardId(series,number);}
+    return r;
+}
+void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.find("\r\n\r\n")==std::string::npos&&data.size()<65536){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0){close(fd);return;}data.append(buf,n);}auto hp=data.find("\r\n\r\n");std::string head=data.substr(0,hp),body=data.substr(hp+4);std::istringstream hs(head);std::string line;Req r;if(!std::getline(hs,line)){close(fd);return;}if(!line.empty()&&line.back()=='\r')line.pop_back();std::istringstream l1(line);std::string target,ver;l1>>r.method>>target>>ver;auto q=target.find('?');r.path=q==std::string::npos?target:target.substr(0,q);r.query=q==std::string::npos?"":target.substr(q+1);while(std::getline(hs,line)){if(!line.empty()&&line.back()=='\r')line.pop_back();auto p=line.find(':');if(p!=std::string::npos)r.headers[lower(util::trim(line.substr(0,p)))]=util::trim(line.substr(p+1));}size_t cl=0;try{cl=std::stoul(r.headers["content-length"]);}catch(...){}while(body.size()<cl){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0)break;body.append(buf,n);}r.body=body.substr(0,cl);auto res=route(r);std::ostringstream out;std::string reason=res.code==200?"OK":res.code==302?"Found":res.code==401?"Unauthorized":res.code==404?"Not Found":"Bad Request";out<<"HTTP/1.1 "<<res.code<<' '<<reason<<"\r\nContent-Type: "<<res.type<<"\r\nContent-Length: "<<res.body.size()<<"\r\nConnection: close\r\n";for(auto&h:res.headers)out<<h.first<<": "<<h.second<<"\r\n";out<<"\r\n"<<res.body;auto s=out.str();std::size_t sent=0;while(sent<s.size()){auto n=send(fd,s.data()+sent,s.size()-sent,MSG_NOSIGNAL);if(n<=0)break;sent+=static_cast<std::size_t>(n);}close(fd);}
 std::string WebServer::cookie(const Req&r,const std::string&name)const{auto it=r.headers.find("cookie");if(it==r.headers.end())return{};for(auto&p:util::split(it->second,';')){auto x=p.find('=');if(x!=std::string::npos&&util::trim(p.substr(0,x))==name)return util::trim(p.substr(x+1));}return{};}
 bool WebServer::authorized(const Req&r)const{auto sid=cookie(r,"SKUDSID");if(sid.empty())return false;std::lock_guard lk(sessions_mu_);return sessions_.count(sid)>0;}
 WebServer::Res WebServer::file(const std::string&name,const std::string&type){const auto path=std::filesystem::path(root_)/"web"/name;std::ifstream f(path,std::ios::binary);if(!f){return{404,"text/plain; charset=utf-8","UI file not found: "+path.string()};}std::ostringstream o;o<<f.rdbuf();Res x{200,type,o.str()};x.headers.push_back({"Cache-Control","no-store, no-cache, must-revalidate, max-age=0"});x.headers.push_back({"Pragma","no-cache"});return x;}
@@ -426,6 +458,41 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/controllers/name"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=controllers_.renameController(std::stoi(f["node"]),f["name"]);}catch(...){}return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/telegram/test"&&r.method=="POST"){std::string err;bool ok=telegram_.sendTest(err);return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
     if(r.path=="/api/export/users"){Res x{200,"text/csv; charset=utf-8",users_.exportCsv()};x.headers.push_back({"Content-Disposition","attachment; filename=users.csv"});return x;}
+    if(r.path=="/api/import/soyal/preview"&&r.method=="POST"){
+        auto q=util::parseForm(r.query);const auto type=q["type"];SoyalImportResult parsed;
+        if(type=="usr")parsed=SoyalImport::parseUsr(r.body);
+        else if(type=="txt")parsed=SoyalImport::parseUserCardText(r.body);
+        else if(!r.body.empty()&&r.body.size()%328==0)parsed=SoyalImport::parseUsr(r.body);
+        else parsed=SoyalImport::parseUserCardText(r.body);
+        if(!parsed.ok)return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\""+util::jsonEscape(parsed.error)+"\"}"};
+        std::ostringstream o;o<<"{\"ok\":true,\"format\":\""<<util::jsonEscape(parsed.format)<<"\",\"total_slots\":"<<parsed.total_slots<<",\"empty_slots\":"<<parsed.empty_slots<<",\"records\":[";bool first=true;
+        for(const auto&x:parsed.records){
+            if(!first)o<<',';first=false;std::optional<User> owner;if(!x.card.empty())owner=users_.byCard(x.card);auto byaddr=uniqueUserByControllerPort(users_,x.address);
+            std::string status=owner?"linked_card":(byaddr?"candidate_address":"new");auto candidate=owner?owner:byaddr;
+            o<<"{\"address\":"<<x.address<<",\"card\":\""<<util::jsonEscape(x.card)<<"\",\"card_series\":"<<x.card_series<<",\"card_number\":"<<x.card_number
+             <<",\"pin_code\":\""<<util::jsonEscape(x.pin_code)<<"\",\"full_name\":\""<<util::jsonEscape(x.full_name)<<"\",\"last_name\":\""<<util::jsonEscape(x.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(x.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(x.middle_name)<<"\",\"department\":\""<<util::jsonEscape(x.department)<<"\",\"position\":\""<<util::jsonEscape(x.position)<<"\",\"source\":\""<<util::jsonEscape(x.source)<<"\",\"status\":\""<<status<<"\",\"local_user_id\":"<<(candidate?candidate->id:0)<<",\"local_user_name\":\""<<util::jsonEscape(candidate?localUserName(*candidate):std::string{})<<"\"}";
+        }
+        o<<"]}";return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/import/soyal/apply-record"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);auto rec=soyalRecordFromForm(f);const auto action=f["action"];
+        if(rec.card.empty())return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"В записи SOYAL нет карты\"}"};
+        std::uint16_t cs=0,cn=0;std::string card_error;if(!util::parseCardId(rec.card,cs,cn,&card_error))return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\""+util::jsonEscape(card_error)+"\"}"};
+        std::optional<User> target;std::string result_action;
+        if(action=="assign"){
+            int id=0;try{id=std::stoi(f["user_id"]);}catch(...){}if(id<=0||!users_.assignCard(id,rec.card))return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"Не удалось привязать карту\"}"};
+            target=users_.byId(id);result_action="assigned_manual";
+        }else if(action=="create"){
+            if(auto owner=users_.byCard(rec.card)){target=owner;result_action="already_linked";}
+            else{User u;u.enabled=true;u.last_name=rec.last_name;u.first_name=rec.first_name;u.middle_name=rec.middle_name;u.department=rec.department;u.position=rec.position;u.pin_code=rec.pin_code;u.controller_port=(rec.address>=0&&rec.address<=16383)?rec.address:0;u.cards.push_back(rec.card);target=users_.upsert(std::move(u));result_action="created";}
+        }else if(action=="auto"){
+            if(auto owner=users_.byCard(rec.card)){target=owner;result_action="matched_card";}
+            else if(auto byaddr=uniqueUserByControllerPort(users_,rec.address)){if(!users_.assignCard(byaddr->id,rec.card))return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"Не удалось привязать карту по адресу\"}"};target=users_.byId(byaddr->id);result_action="assigned_address";}
+            else return{200,"application/json; charset=utf-8","{\"ok\":true,\"action\":\"no_match\",\"user_id\":0}"};
+        }else return{400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"Неизвестное действие импорта\"}"};
+        if(target){mergeSoyalFields(*target,rec);target=users_.upsert(*target);if(!target->department.empty())departments_.add(target->department);}
+        attendance_.refreshUserMetadata();std::ostringstream o;o<<"{\"ok\":true,\"action\":\""<<result_action<<"\",\"user_id\":"<<(target?target->id:0)<<",\"user_name\":\""<<util::jsonEscape(target?localUserName(*target):std::string{})<<"\"}";return{200,"application/json; charset=utf-8",o.str()};
+    }
     if(r.path=="/api/import/users"&&r.method=="POST"){std::string err;bool ok=users_.importCsv(r.body,err);if(ok)departments_.ensure(users_.usedDepartments());attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
     if(r.path=="/api/export/settings"){Res x{200,"text/plain; charset=utf-8",cfg_.raw()};x.headers.push_back({"Content-Disposition","attachment; filename=system.conf"});return x;}
     if(r.path=="/api/import/settings"&&r.method=="POST"){bool ok=cfg_.replaceRaw(r.body);return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}

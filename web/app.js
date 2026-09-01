@@ -21,6 +21,9 @@ let PROTOCOL_ENTRIES=[];
 let PROTOCOL_LAST_ID=0;
 let PROTOCOL_RUNNING=false;
 let PROTOCOL_TIMER=null;
+let SOYAL_RECORDS=[];
+let SOYAL_IMPORT_META=null;
+let SOYAL_ASSIGN_RECORD=null;
 
 function enc(o){return new URLSearchParams(o)}
 async function api(url,opt={}){let r=await fetch(url,opt);if(r.status===401){location='/login.html';throw new Error('auth');}return r}
@@ -527,16 +530,88 @@ async function saveUser(){
     userDialog.close();await loadUsers();await loadDepartments(false);await loadCards();refreshStatus();
 }
 async function deleteUser(id){await openUserDelete(id);}
-function openAssign(card){
+function openAssign(card,keepSoyal=false){
     if(!USERS.length)return alert('Сначала создайте пользователя');
+    if(!keepSoyal)SOYAL_ASSIGN_RECORD=null;
     assignForm.card.value=card;assignUsers.innerHTML=USERS.map(u=>`<option value="${u.id}">${u.id} — ${esc(userDisplayName(u))} (${esc(u.department||'без отдела')}) · карт: ${userCardIds(u).length}</option>`).join('');assignDialog.showModal();
 }
 async function assignCard(){
-    let o=Object.fromEntries(new FormData(assignForm));let r=await api('/api/cards/assign',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось добавить карту'));
-    assignDialog.close();await loadUsers();await loadCards();refreshStatus();
+    let o=Object.fromEntries(new FormData(assignForm)),r;
+    if(SOYAL_ASSIGN_RECORD){
+        const rec=SOYAL_ASSIGN_RECORD;r=await api('/api/import/soyal/apply-record',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(soyalPayload(rec,'assign',o.user_id))});
+    }else r=await api('/api/cards/assign',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});
+    let j=await r.json();if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось добавить карту'));
+    SOYAL_ASSIGN_RECORD=null;assignDialog.close();await loadUsers();await loadCards();refreshSoyalStatuses();renderSoyalPreview();refreshStatus();
 }
 async function removeCard(card){if(!confirm('Отвязать только карту '+card+' от пользователя? Остальные карты пользователя останутся.'))return;let r=await api('/api/cards/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card})});let j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось отвязать карту');await loadUsers();await loadCards();refreshStatus();}
 async function renameController(node,name){await api('/api/controllers/name',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({node,name})});}
+
+function soyalPayload(rec,action,userId=0){
+    return {action,user_id:userId||'',address:rec.address??0,card:rec.card||'',pin_code:rec.pin_code||'',full_name:rec.full_name||'',last_name:rec.last_name||'',first_name:rec.first_name||'',middle_name:rec.middle_name||'',department:rec.department||'',position:rec.position||'',source:rec.source||''};
+}
+function refreshSoyalStatuses(){
+    if(!SOYAL_RECORDS.length)return;
+    for(const rec of SOYAL_RECORDS){
+        const owner=USERS.find(u=>userCardIds(u).includes(rec.card));
+        const byAddr=USERS.filter(u=>Number(u.controller_port||0)===Number(rec.address));
+        if(owner){rec.status='linked_card';rec.local_user_id=owner.id;rec.local_user_name=userDisplayName(owner);}
+        else if(byAddr.length===1){rec.status='candidate_address';rec.local_user_id=byAddr[0].id;rec.local_user_name=userDisplayName(byAddr[0]);}
+        else{rec.status='new';rec.local_user_id=0;rec.local_user_name='';}
+    }
+}
+function soyalStatusHtml(rec){
+    if(rec.status==='linked_card')return `<span class="status-pill status-present">Привязана</span><small class="table-subtext">${esc(rec.local_user_name||('Пользователь №'+rec.local_user_id))}</small>`;
+    if(rec.status==='candidate_address')return `<span class="status-pill status-warn">Совпадает Address</span><small class="table-subtext">порт ${rec.address} → ${esc(rec.local_user_name||('№'+rec.local_user_id))}</small>`;
+    return '<span class="status-pill">Новая</span><small class="table-subtext">совпадений нет</small>';
+}
+function renderSoyalPreview(){
+    if(!window.soyalImportBody)return;
+    if(!SOYAL_RECORDS.length){soyalImportBody.innerHTML='<tr><td colspan="7" class="muted">Нет предварительных данных</td></tr>';if(window.soyalAutoBtn)soyalAutoBtn.disabled=true;if(window.soyalCreateBtn)soyalCreateBtn.disabled=true;return;}
+    const linked=SOYAL_RECORDS.filter(x=>x.status==='linked_card').length,candidates=SOYAL_RECORDS.filter(x=>x.status==='candidate_address').length,fresh=SOYAL_RECORDS.length-linked-candidates;
+    if(window.soyalImportSummary)soyalImportSummary.innerHTML=`Формат: <b>${esc(SOYAL_IMPORT_META?.format||'SOYAL')}</b> · найдено записей: <b>${SOYAL_RECORDS.length}</b> · уже привязано: <b>${linked}</b> · совпадение по Address: <b>${candidates}</b> · новых: <b>${fresh}</b> · пустых слотов: <b>${SOYAL_IMPORT_META?.empty_slots||0}</b>`;
+    soyalAutoBtn.disabled=false;soyalCreateBtn.disabled=false;
+    soyalImportBody.innerHTML=SOYAL_RECORDS.map((rec,i)=>{
+        const fio=rec.full_name||[rec.last_name,rec.first_name,rec.middle_name].filter(Boolean).join(' ')||'—';
+        const info=`<b>${esc(fio)}</b>${rec.position?`<small class="table-subtext">${esc(rec.position)}</small>`:''}`;
+        let actions='';
+        if(rec.status==='linked_card')actions=`<button class="mini" onclick="editUser(${rec.local_user_id})">Открыть пользователя</button>`;
+        else actions=`<button class="mini" onclick="applySoyalOne(${i},'auto')">Авто</button> <button class="mini" onclick="openSoyalAssign(${i})">Привязать</button> <button class="mini" onclick="createSoyalOne(${i})">Создать</button>`;
+        return `<tr><td><b>${rec.address}</b></td><td class="soyal-card">${esc(cardTextFromRaw(rec.card))}</td><td>${rec.pin_code?esc(rec.pin_code):'—'}</td><td class="soyal-name">${info}</td><td>${esc(rec.department||'—')}</td><td>${soyalStatusHtml(rec)}</td><td><div class="soyal-actions">${actions}</div></td></tr>`;
+    }).join('');
+}
+async function previewSoyal(file){
+    if(!file)return;const name=(file.name||'').toLowerCase();const type=name.endsWith('.usr')?'usr':'txt';
+    if(window.soyalImportSummary)soyalImportSummary.textContent='Чтение '+file.name+'...';
+    const buf=await file.arrayBuffer();const r=await api('/api/import/soyal/preview?type='+type,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:buf});const j=await r.json();
+    if(!r.ok||!j.ok){SOYAL_RECORDS=[];renderSoyalPreview();return alert('Ошибка SOYAL: '+(j.error||'не удалось разобрать файл'));}
+    SOYAL_IMPORT_META=j;SOYAL_RECORDS=j.records||[];await loadUsers();refreshSoyalStatuses();renderSoyalPreview();
+}
+function clearSoyalPreview(){SOYAL_RECORDS=[];SOYAL_IMPORT_META=null;SOYAL_ASSIGN_RECORD=null;if(window.soyalImportFile)soyalImportFile.value='';if(window.soyalImportSummary)soyalImportSummary.textContent='Файл SOYAL ещё не выбран.';renderSoyalPreview();}
+async function applySoyalRecord(index,action,userId=0){
+    const rec=SOYAL_RECORDS[index];if(!rec)return null;
+    const r=await api('/api/import/soyal/apply-record',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(soyalPayload(rec,action,userId))});const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'ошибка импорта');return j;
+}
+async function applySoyalOne(index,action){
+    try{const j=await applySoyalRecord(index,action);if(j.action==='no_match')alert('Автосопоставление не найдено. Используйте «Привязать» или «Создать».');await loadUsers();await loadDepartments(false);refreshSoyalStatuses();renderSoyalPreview();return j;}catch(e){alert('Ошибка: '+e.message);}
+}
+async function createSoyalOne(index){
+    const j=await applySoyalOne(index,'create');if(j&&j.user_id)editUser(j.user_id);
+}
+async function openSoyalAssign(index){
+    if(!USERS_LOADED)await loadUsers();const rec=SOYAL_RECORDS[index];if(!rec)return;SOYAL_ASSIGN_RECORD=rec;openAssign(rec.card,true);
+}
+async function applySoyalBulk(action){
+    if(!SOYAL_RECORDS.length)return;const title=action==='auto'?'Автопривязать все записи SOYAL? Совпадение выполняется по карте, затем по уникальному Порту контроллера = Address.':'Создать отдельных пользователей для всех ещё непривязанных карт SOYAL?';if(!confirm(title))return;
+    soyalAutoBtn.disabled=true;soyalCreateBtn.disabled=true;let done=0,changed=0,noMatch=0,failed=0;
+    for(let i=0;i<SOYAL_RECORDS.length;i++){
+        const rec=SOYAL_RECORDS[i];if(rec.status==='linked_card'){done++;continue;}
+        try{const j=await applySoyalRecord(i,action);if(j.action==='no_match')noMatch++;else changed++;}catch(e){failed++;}
+        done++;if(window.soyalImportSummary)soyalImportSummary.innerHTML=`Импорт SOYAL: <b>${done}/${SOYAL_RECORDS.length}</b> · изменено ${changed} · без совпадения ${noMatch} · ошибок ${failed}`;
+    }
+    await loadUsers();await loadDepartments(false);refreshSoyalStatuses();renderSoyalPreview();alert(`Готово. Изменено/создано: ${changed}; без автосовпадения: ${noMatch}; ошибок: ${failed}`);
+}
+
 async function importUsers(file){if(!file)return;let text=await file.text();let r=await api('/api/import/users',{method:'POST',headers:{'Content-Type':'text/csv'},body:text});let j=await r.json();alert(j.ok?'Импорт выполнен':'Ошибка: '+j.error);await loadUsers();await loadDepartments(false);}
 
 
