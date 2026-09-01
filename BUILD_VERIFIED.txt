@@ -79,3 +79,9 @@ v0.3.0 live protocol monitor:
 - web Live protocol tab: pause/clear/Node filter/background-0x25 filter/autoscroll.
 - Embedded web UI contains Live protocol section and cache revision v=030: PASS.
 - Trace is memory-only and bounded to 1000 entries.
+
+v0.3.1 FIFO event drain:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- node --check web/app.js: PASS.
+- Undecoded 25H events are persisted to data/events/undecoded_unex.csv before 37H removal.
+- Oldest-event FIFO can no longer be permanently blocked by one undecoded record.

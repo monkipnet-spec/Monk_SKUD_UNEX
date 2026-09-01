@@ -134,17 +134,25 @@ bool Unex721Protocol::ping(std::uint8_t node){
 }
 
 std::optional<RawUnexEvent> Unex721Protocol::getOldestEvent(std::uint8_t node){
-    if(auto r=transactExtended(node,0x25,{},180)){
-        if(r->size()>=8&&(*r)[7]==ACK)return std::nullopt; // no event in controller
-        if(r->size()>=30)return decodeExtendedEvent(node,*r);
-        return std::nullopt;
+    // The real UNEX 721 answers 25H through the standard 0x7E protocol and
+    // ignores Extended frames. Use the proven path first so every poll does
+    // not waste ~180 ms waiting for an Extended timeout.
+    if(auto r=transact(node,0x25,{},120)){
+        if(r->size()<18)return std::nullopt; // short ACK/no-event response
+        return decodeEvent(node,*r);
     }
-    auto r=transact(node,0x25,{},120);if(!r)return std::nullopt;if(r->size()<18)return std::nullopt;return decodeEvent(node,*r);
+    if(auto r=transactExtended(node,0x25,{},180)){
+        if(r->size()>=8&&(*r)[7]==ACK)return std::nullopt;
+        if(r->size()>=30)return decodeExtendedEvent(node,*r);
+    }
+    return std::nullopt;
 }
 
 bool Unex721Protocol::removeOldestEvent(std::uint8_t node){
+    // Same as 25H: standard 0x7E is the confirmed UNEX 721 transport.
+    if(auto r=transact(node,0x37,{},120))return true;
     if(auto r=transactExtended(node,0x37,{},180))return r->size()>=8&&(*r)[7]!=NACK;
-    return transact(node,0x37,{},120).has_value();
+    return false;
 }
 
 bool Unex721Protocol::setSystemTime(std::uint8_t node){

@@ -307,3 +307,11 @@ v0.2.9 также исправляет диагностическое отобр
 - Background `0x25` polling is hidden by default in UI and can be enabled for card-capture tests.
 - Clear/Pause/auto-scroll/Node filter are available; no `strace` is required for routine protocol capture.
 - Trace is memory-only (max 1000 rows), never persisted to disk.
+
+
+## v0.3.1 — FIFO event drain / RAW quarantine
+
+- Исправлена блокировка очереди событий UNEX 721: 25H возвращает старейшую запись, поэтому нераспознанное событие больше не остаётся головой FIFO навсегда.
+- Перед 37H Delete Oldest Event нераспознанный RAW сохраняется в `data/events/undecoded_unex.csv`.
+- Live protocol показывает успешное удаление/ошибку удаления; после очистки старых записей становятся видны новые проходы по карте.
+- Декодирование карты не угадывается: неизвестный формат остаётся RAW до подтверждения по реальным данным.

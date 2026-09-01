@@ -452,10 +452,41 @@ void ControllerManager::loop(){
             {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.node==node){c.online=online;if(online)c.last_seen=util::nowLocal();if(evt)c.last_raw_hex=evt->raw_hex;cname=c.name;}cb=raw_cb_;}
             if(evt){
                 bool log_semantic=false;{std::lock_guard lk(trace_mu_);if(last_event_trace_raw_!=evt->raw_hex){last_event_trace_raw_=evt->raw_hex;log_semantic=true;}}
-                if(log_semantic){std::string msg="Событие контроллера";if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);if(!evt->card.empty())msg+=", карта="+evt->card;else msg+=", карта пока не декодирована";appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);}
+                if(log_semantic){
+                    std::string msg="Событие контроллера";
+                    if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);
+                    if(!evt->card.empty())msg+=", карта="+evt->card;else msg+=", карта пока не декодирована";
+                    appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);
+
+                    // Never let an undecoded record block the controller FIFO forever.
+                    // Preserve the full RAW frame locally before acknowledging/removing it.
+                    if(evt->card.empty()){
+                        try{
+                            const auto root=std::filesystem::path(path_).parent_path().parent_path();
+                            const auto dir=root/"data"/"events";
+                            std::filesystem::create_directories(dir);
+                            const auto file=dir/"undecoded_unex.csv";
+                            const bool need_header=!std::filesystem::exists(file)||std::filesystem::file_size(file)==0;
+                            std::ofstream raw(file,std::ios::app);
+                            if(raw){
+                                if(need_header)raw<<"time;node;command;raw_hex\n";
+                                raw<<util::nowLocal()<<';'<<node<<";25;"<<evt->raw_hex<<"\n";
+                            }
+                        }catch(...){}
+                    }
+                }
                 if(cb)cb(*evt);
-                if(!evt->card.empty()){attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);proto.removeOldestEvent((std::uint8_t)node);}
-                /* if card undecoded, do NOT delete the controller event */
+                if(!evt->card.empty())attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);
+
+                // 25H always returns the oldest FIFO record.  It must be removed after
+                // being copied locally, otherwise the same record hides every newer card
+                // event behind it (observed on the real UNEX 721).
+                const bool removed=proto.removeOldestEvent((std::uint8_t)node);
+                if(log_semantic){
+                    appendProtocolTrace("INFO",node,0x37,"semantic",{},
+                        removed?(evt->card.empty()?"RAW сохранён; старое нераспознанное событие удалено из FIFO":"Событие обработано и удалено из FIFO")
+                               :"Не удалось удалить старейшее событие из FIFO; оно будет прочитано повторно");
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.getInt("controllers.poll_interval_ms",200)));
         }
