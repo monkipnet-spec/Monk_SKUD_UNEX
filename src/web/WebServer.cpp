@@ -26,11 +26,35 @@ void WebServer::stop(){running_=false;if(server_fd_>=0){shutdown(server_fd_,SHUT
 void WebServer::loop(){while(running_){int c=accept(server_fd_,nullptr,nullptr);if(c<0){if(!running_)break;continue;}std::thread(&WebServer::handleClient,this,c).detach();}}
 static std::string lower(std::string s){for(char&c:s)c=std::tolower((unsigned char)c);return s;}
 static std::vector<int> parseIntList(const std::string&s){std::vector<int> out;for(auto&part:util::split(s,',')){try{int v=std::stoi(util::trim(part));if(v>0&&std::find(out.begin(),out.end(),v)==out.end())out.push_back(v);}catch(...){}}return out;}
+static bool parseCardList(std::string text,std::vector<std::string>&out,std::string&error){
+    std::replace(text.begin(),text.end(),'|',',');
+    for(const auto&part:util::split(text,',')){
+        const auto value=util::trim(part);if(value.empty())continue;
+        std::uint16_t series=0,number=0;
+        if(!util::parseCardId(value,series,number,&error))return false;
+        const auto canonical=util::formatCardId(series,number);
+        if(std::find(out.begin(),out.end(),canonical)==out.end())out.push_back(canonical);
+    }
+    return true;
+}
 void WebServer::handleClient(int fd){std::string data;char buf[4096];while(data.find("\r\n\r\n")==std::string::npos&&data.size()<65536){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0){close(fd);return;}data.append(buf,n);}auto hp=data.find("\r\n\r\n");std::string head=data.substr(0,hp),body=data.substr(hp+4);std::istringstream hs(head);std::string line;Req r;if(!std::getline(hs,line)){close(fd);return;}if(!line.empty()&&line.back()=='\r')line.pop_back();std::istringstream l1(line);std::string target,ver;l1>>r.method>>target>>ver;auto q=target.find('?');r.path=q==std::string::npos?target:target.substr(0,q);r.query=q==std::string::npos?"":target.substr(q+1);while(std::getline(hs,line)){if(!line.empty()&&line.back()=='\r')line.pop_back();auto p=line.find(':');if(p!=std::string::npos)r.headers[lower(util::trim(line.substr(0,p)))]=util::trim(line.substr(p+1));}size_t cl=0;try{cl=std::stoul(r.headers["content-length"]);}catch(...){}while(body.size()<cl){auto n=recv(fd,buf,sizeof(buf),0);if(n<=0)break;body.append(buf,n);}r.body=body.substr(0,cl);auto res=route(r);std::ostringstream out;std::string reason=res.code==200?"OK":res.code==302?"Found":res.code==401?"Unauthorized":res.code==404?"Not Found":"Bad Request";out<<"HTTP/1.1 "<<res.code<<' '<<reason<<"\r\nContent-Type: "<<res.type<<"\r\nContent-Length: "<<res.body.size()<<"\r\nConnection: close\r\n";for(auto&h:res.headers)out<<h.first<<": "<<h.second<<"\r\n";out<<"\r\n"<<res.body;auto s=out.str();send(fd,s.data(),s.size(),MSG_NOSIGNAL);close(fd);}
 std::string WebServer::cookie(const Req&r,const std::string&name)const{auto it=r.headers.find("cookie");if(it==r.headers.end())return{};for(auto&p:util::split(it->second,';')){auto x=p.find('=');if(x!=std::string::npos&&util::trim(p.substr(0,x))==name)return util::trim(p.substr(x+1));}return{};}
 bool WebServer::authorized(const Req&r)const{auto sid=cookie(r,"SKUDSID");if(sid.empty())return false;std::lock_guard lk(sessions_mu_);return sessions_.count(sid)>0;}
 WebServer::Res WebServer::file(const std::string&name,const std::string&type){const auto path=std::filesystem::path(root_)/"web"/name;std::ifstream f(path,std::ios::binary);if(!f){return{404,"text/plain; charset=utf-8","UI file not found: "+path.string()};}std::ostringstream o;o<<f.rdbuf();Res x{200,type,o.str()};x.headers.push_back({"Cache-Control","no-store, no-cache, must-revalidate, max-age=0"});x.headers.push_back({"Pragma","no-cache"});return x;}
-WebServer::Res WebServer::jsonUsers(){auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;for(auto&u:v){if(!first)o<<',';first=false;o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")<<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"card_series\":\""<<util::jsonEscape(u.card_series)<<"\",\"card_number\":\""<<util::jsonEscape(u.card_number)<<"\",\"pin_code\":\""<<util::jsonEscape(u.pin_code)<<"\",\"access_mode\":\""<<util::jsonEscape(u.access_mode)<<"\",\"controller_port\":"<<u.controller_port<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonUsers(){
+    auto v=users_.list();std::ostringstream o;o<<"[";bool first=true;
+    for(const auto&u:v){
+        if(!first)o<<',';first=false;
+        o<<"{\"id\":"<<u.id<<",\"enabled\":"<<(u.enabled?"true":"false")
+         <<",\"last_name\":\""<<util::jsonEscape(u.last_name)<<"\",\"first_name\":\""<<util::jsonEscape(u.first_name)<<"\",\"middle_name\":\""<<util::jsonEscape(u.middle_name)<<"\""
+         <<",\"department\":\""<<util::jsonEscape(u.department)<<"\",\"position\":\""<<util::jsonEscape(u.position)<<"\""
+         <<",\"card\":\""<<util::jsonEscape(u.card)<<"\",\"card_series\":\""<<util::jsonEscape(u.card_series)<<"\",\"card_number\":\""<<util::jsonEscape(u.card_number)<<"\""
+         <<",\"cards\":[";
+        bool first_card=true;for(const auto&card:u.cards){if(!first_card)o<<',';first_card=false;o<<"\""<<util::jsonEscape(card)<<"\"";}
+        o<<"],\"pin_code\":\""<<util::jsonEscape(u.pin_code)<<"\",\"access_mode\":\""<<util::jsonEscape(u.access_mode)<<"\",\"controller_port\":"<<u.controller_port<<"}";
+    }
+    o<<"]";return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::jsonDepartments(){auto v=departments_.list();std::ostringstream o;o<<"[";bool first=true;for(const auto&name:v){if(!first)o<<',';first=false;o<<"\""<<util::jsonEscape(name)<<"\"";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonCards(){auto v=attendance_.activities();std::ostringstream o;o<<"[";bool first=true;for(auto&a:v){if(!first)o<<',';first=false;o<<"{\"card\":\""<<util::jsonEscape(a.card)<<"\",\"user_id\":"<<a.user_id<<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\",\"department\":\""<<util::jsonEscape(a.department)<<"\",\"last_read\":\""<<a.last_read<<"\",\"last_event\":\""<<util::jsonEscape(a.last_event)<<"\",\"controller_node\":"<<a.controller_node<<"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonTodayAttendance(){
@@ -325,12 +349,18 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/users/save"&&r.method=="POST"){
         auto f=util::parseForm(r.body);User u;try{u.id=std::stoi(f["id"]);}catch(...){}
         u.enabled=f["enabled"]!="0";u.last_name=f["last_name"];u.first_name=f["first_name"];u.middle_name=f["middle_name"];u.department=f["department"];u.position=f["position"];
-        u.card_series=util::trim(f["card_series"]);u.card_number=util::trim(f["card_number"]);u.pin_code=util::trim(f["pin_code"]);u.access_mode=f["access_mode"].empty()?"card":f["access_mode"];
-        std::uint16_t series=0,number=0;std::string validation_error;
-        const bool any_card=!u.card_series.empty()||!u.card_number.empty();
-        if(any_card){
-            if(!util::parseCardParts(u.card_series,u.card_number,series,number,&validation_error))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(validation_error)+"\"}"};
-            u.card_series=util::formatCardSeries(series);u.card_number=std::to_string(number);u.card=util::formatCardId(series,number);
+        u.pin_code=util::trim(f["pin_code"]);u.access_mode=f["access_mode"].empty()?"card":f["access_mode"];
+        std::string validation_error;
+        if(!f["cards"].empty()){
+            if(!parseCardList(f["cards"],u.cards,validation_error))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(validation_error)+"\"}"};
+        }else{
+            // Backward-compatible single-card form/API.
+            u.card_series=util::trim(f["card_series"]);u.card_number=util::trim(f["card_number"]);
+            std::uint16_t series=0,number=0;const bool any_card=!u.card_series.empty()||!u.card_number.empty();
+            if(any_card){
+                if(!util::parseCardParts(u.card_series,u.card_number,series,number,&validation_error))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(validation_error)+"\"}"};
+                u.card_series=util::formatCardSeries(series);u.card_number=std::to_string(number);u.card=util::formatCardId(series,number);u.cards.push_back(u.card);
+            }
         }
         if(!u.pin_code.empty()){
             bool digits=u.pin_code.size()==4&&std::all_of(u.pin_code.begin(),u.pin_code.end(),[](unsigned char c){return std::isdigit(c);});
@@ -363,7 +393,7 @@ WebServer::Res WebServer::route(const Req&r){
         bool ok=departments_.erase(name);
         return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"department not found\"}"};
     }
-    if(r.path=="/api/cards/assign"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.assignCard(std::stoi(f["user_id"]),f["card"]);}catch(...){}attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
+    if(r.path=="/api/cards/assign"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=users_.assignCard(std::stoi(f["user_id"]),f["card"]);}catch(...){}if(ok)attendance_.refreshUserMetadata();return{ok?200:400,"application/json",ok?"{\"ok\":true}":"{\"ok\":false,\"error\":\"Не удалось добавить карту пользователю\"}"};}
     if(r.path=="/api/cards/delete"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=users_.removeCard(f["card"]);attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/controllers/name"&&r.method=="POST"){auto f=util::parseForm(r.body);bool ok=false;try{ok=controllers_.renameController(std::stoi(f["node"]),f["name"]);}catch(...){}return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
     if(r.path=="/api/telegram/test"&&r.method=="POST"){std::string err;bool ok=telegram_.sendTest(err);return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}

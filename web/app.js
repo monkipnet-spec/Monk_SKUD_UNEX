@@ -36,10 +36,15 @@ async function loadTodayAttendance(){
     todayAttendanceBody.innerHTML=a.map(x=>`<tr><td><b>${esc(x.user_name||('Пользователь №'+x.user_id))}</b></td><td>${esc(x.department||'—')}</td><td>${esc(cardTextFromRaw(x.card||''))}</td><td>${timeOnly(x.arrival_time)}</td><td>${timeOnly(x.departure_time)}</td><td><span class="status-pill ${x.status==='at_work'?'status-present':'status-left'}">${x.status==='at_work'?'На работе':'Ушёл'}</span></td></tr>`).join('');
 }
 
-function cardDisplay(u){if(u&&u.card_series&&u.card_number!==undefined&&u.card_number!==null&&u.card_number!=='')return `${u.card_series} / ${u.card_number}`;return u&&u.card?cardTextFromRaw(u.card):'—';}
+function userCardIds(u){
+    if(u&&Array.isArray(u.cards)&&u.cards.length)return [...new Set(u.cards.map(x=>String(x||'').trim()).filter(Boolean))];
+    return u&&u.card?[String(u.card)]:[];
+}
+function cardDisplay(u){const cards=userCardIds(u).map(cardTextFromRaw);return cards.length?cards.join(', '):'—';}
+function userCardsHtml(u){const cards=userCardIds(u);if(!cards.length)return '—';return `<div class="user-cards-cell">${cards.map(c=>`<span class="user-card-chip">${esc(cardTextFromRaw(c))}</span>`).join('')}</div><small class="table-subtext">${cards.length} карт(а)</small>`;}
 function cardTextFromRaw(card){const s=String(card||'').trim();let m=s.match(/^(\d+):(\d+)$/);if(m)return Number(m[1])+' / '+Number(m[2]);return s||'—';}
 function accessModeText(mode){return ({card:'Только карта',card_or_pin:'Карта ИЛИ PIN',card_and_pin:'Карта + PIN'})[mode]||'Только карта';}
-async function loadUsers(){USERS=await (await api('/api/users')).json();USERS_LOADED=true;usersBody.innerHTML=USERS.map(u=>`<tr><td>${u.id}</td><td>${esc(u.last_name+' '+u.first_name+' '+u.middle_name)}</td><td>${esc(u.department||'—')}</td><td>${esc(u.position)}</td><td><b>${esc(cardDisplay(u))}</b></td><td>${u.pin_code?'<span class="status-pill status-present">PIN задан</span>':'—'}<small class="table-subtext">${esc(accessModeText(u.access_mode))}</small></td><td>${u.controller_port||'—'}</td><td><button class="mini" onclick="editUser(${u.id})">Изменить</button> <button class="mini danger" onclick="deleteUser(${u.id})">Удалить</button></td></tr>`).join('');}
+async function loadUsers(){USERS=await (await api('/api/users')).json();USERS_LOADED=true;usersBody.innerHTML=USERS.map(u=>`<tr><td>${u.id}</td><td>${esc(u.last_name+' '+u.first_name+' '+u.middle_name)}</td><td>${esc(u.department||'—')}</td><td>${esc(u.position)}</td><td>${userCardsHtml(u)}</td><td>${u.pin_code?'<span class="status-pill status-present">PIN задан</span>':'—'}<small class="table-subtext">${esc(accessModeText(u.access_mode))}</small></td><td>${u.controller_port||'—'}</td><td><button class="mini" onclick="editUser(${u.id})">Изменить</button> <button class="mini danger" onclick="deleteUser(${u.id})">Удалить</button></td></tr>`).join('');}
 
 function departmentOptions(selected=''){
     let items=[...DEPARTMENTS];
@@ -88,7 +93,7 @@ async function deleteDepartment(name){
     await loadDepartments();
 }
 
-async function loadCards(){await loadUsers();let a=await (await api('/api/cards/active')).json();cardsBody.innerHTML=a.map(x=>`<tr><td><b>${esc(cardTextFromRaw(x.card))}</b></td><td>${x.user_id||'—'}</td><td>${esc(x.user_name||'Не привязана')}</td><td>${esc(x.department||'')}</td><td>${esc(x.last_read)}</td><td>${esc(x.last_event)}</td><td>${x.user_id?`<button class="mini" onclick="editUser(${x.user_id})">Пользователь</button> <button class="mini danger" onclick="removeCard('${js(x.card)}')">Отвязать</button>`:`<button class="mini" onclick="openAssign('${js(x.card)}')">Добавить / привязать</button>`}</td></tr>`).join('');}
+async function loadCards(){await loadUsers();let a=await (await api('/api/cards/active')).json();cardsBody.innerHTML=a.length?a.map(x=>`<tr><td><b>${esc(cardTextFromRaw(x.card))}</b><small class="read-card-badge">получена из 25H</small></td><td>${x.controller_node||'—'}</td><td>${x.user_id||'—'}</td><td>${esc(x.user_name||'Не привязана')}</td><td>${esc(x.department||'')}</td><td>${esc(x.last_read)}</td><td>${esc(x.last_event)}</td><td>${x.user_id?`<button class="mini" onclick="editUser(${x.user_id})">Пользователь</button> <button class="mini danger" onclick="removeCard('${js(x.card)}')">Отвязать эту карту</button>`:`<button class="mini" onclick="openAssign('${js(x.card)}')">Добавить пользователю</button>`}</td></tr>`).join(''):'<tr><td colspan="8" class="muted">Контроллер ещё не передавал распознанных карт.</td></tr>';}
 async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td></tr>`).join('');return CONTROLLERS;}
 
 function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);}
@@ -431,35 +436,73 @@ async function startUserDelete(){
 }
 
 
+function renderUserCardRows(cards=[]){
+    if(!window.userCardsList)return;
+    userCardsList.innerHTML='';
+    cards.forEach(card=>addUserCardRow(card));
+    updateUserCardsEmpty();
+}
+function updateUserCardsEmpty(){
+    if(!window.userCardsList)return;
+    const has=userCardsList.querySelector('.user-card-row');
+    const old=userCardsList.querySelector('.user-card-empty');if(old)old.remove();
+    if(!has){const d=document.createElement('div');d.className='user-card-empty';d.textContent='Карты не назначены. Можно сохранить пользователя без карты или добавить одну/несколько карт.';userCardsList.appendChild(d);}
+}
+function addUserCardRow(card=''){
+    if(!window.userCardsList)return;
+    const empty=userCardsList.querySelector('.user-card-empty');if(empty)empty.remove();
+    let series='',number='';const m=String(card||'').trim().match(/^(\d+):(\d+)$/);if(m){series=String(Number(m[1]));number=String(Number(m[2]));}
+    const row=document.createElement('div');row.className='user-card-row';
+    row.innerHTML=`<label><small>Серия</small><input data-card-series inputmode="numeric" maxlength="5" value="${attr(series)}" placeholder="112"></label><label><small>Номер карты</small><input data-card-number inputmode="numeric" maxlength="5" value="${attr(number)}" placeholder="53910"></label><button class="mini danger" type="button" onclick="removeUserCardRow(this)">Удалить</button>`;
+    userCardsList.appendChild(row);
+}
+function removeUserCardRow(button){button.closest('.user-card-row')?.remove();updateUserCardsEmpty();}
+function collectUserCards(){
+    const cards=[];
+    for(const row of userCardsList.querySelectorAll('.user-card-row')){
+        const series=row.querySelector('[data-card-series]').value.trim(),number=row.querySelector('[data-card-number]').value.trim();
+        if(!series&&!number)continue;
+        if(!series||!number)return {ok:false,error:'Для каждой карты укажите одновременно серию и номер'};
+        if(!/^\d{1,5}$/.test(series)||Number(series)>65535)return {ok:false,error:'Серия карты должна быть десятичным числом 0..65535'};
+        if(!/^\d{1,5}$/.test(number)||Number(number)>65535)return {ok:false,error:'Номер карты должен быть десятичным числом 0..65535'};
+        const card=Number(series)+':'+Number(number);if(!cards.includes(card))cards.push(card);
+    }
+    return {ok:true,cards};
+}
+
 async function editUser(id=0){
     if(!USERS_LOADED)await loadUsers();
     await loadDepartments(false);
-    let u=USERS.find(x=>x.id===id)||{id:0,enabled:true,last_name:'',first_name:'',middle_name:'',department:'',position:'',card:'',card_series:'',card_number:'',pin_code:'',access_mode:'card',controller_port:0};
+    let u=USERS.find(x=>x.id===id)||{id:0,enabled:true,last_name:'',first_name:'',middle_name:'',department:'',position:'',cards:[],pin_code:'',access_mode:'card',controller_port:0};
     userDepartment.innerHTML=departmentOptions(u.department||'');
-    for(let [k,v] of Object.entries(u)){let e=userForm.elements[k];if(!e)continue;if(e.type==='checkbox')e.checked=!!v;else e.value=v??'';}
+    for(let [k,v] of Object.entries(u)){let e=userForm.elements[k];if(!e||k==='cards')continue;if(e.type==='checkbox')e.checked=!!v;else e.value=v??'';}
     userDepartment.value=u.department||'';
     userForm.elements.pin_code.value=u.pin_code||'';
     userForm.elements.access_mode.value=u.access_mode||'card';
+    renderUserCardRows(userCardIds(u));
     userDialog.showModal();
 }
 
 async function saveUser(){
     let f=new FormData(userForm),o=Object.fromEntries(f.entries());o.enabled=userForm.elements.enabled.checked?'1':'0';
-    o.card_series=(o.card_series||'').trim();o.card_number=(o.card_number||'').trim();o.pin_code=(o.pin_code||'').trim();
-    if((o.card_series&&!o.card_number)||(!o.card_series&&o.card_number))return alert('Укажите одновременно серию и номер карты');
-    if(o.card_series&&!/^\d{1,5}$/.test(o.card_series))return alert('Серия карты должна быть десятичным числом 0..65535');
-    if(o.card_series&&Number(o.card_series)>65535)return alert('Серия карты не может быть больше 65535');
-    if(o.card_number&&!/^\d{1,5}$/.test(o.card_number))return alert('Номер карты должен быть десятичным числом 0..65535');
-    if(o.card_number&&Number(o.card_number)>65535)return alert('Номер карты не может быть больше 65535');
+    o.pin_code=(o.pin_code||'').trim();
+    const cardResult=collectUserCards();if(!cardResult.ok)return alert(cardResult.error);
+    o.cards=cardResult.cards.join(',');userForm.elements.cards.value=o.cards;
     if(o.pin_code&&(!/^\d{4}$/.test(o.pin_code)||Number(o.pin_code)<1))return alert('PIN должен содержать 4 цифры: 0001..9999');
     if((o.access_mode==='card_or_pin'||o.access_mode==='card_and_pin')&&!o.pin_code)return alert('Для выбранного режима доступа укажите PIN');
     let r=await api('/api/users/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось сохранить пользователя'));
     userDialog.close();await loadUsers();await loadDepartments(false);await loadCards();refreshStatus();
 }
 async function deleteUser(id){await openUserDelete(id);}
-function openAssign(card){assignForm.card.value=card;assignUsers.innerHTML=USERS.map(u=>`<option value="${u.id}">${u.id} — ${esc(u.last_name+' '+u.first_name)} (${esc(u.department)})</option>`).join('');assignDialog.showModal();}
-async function assignCard(){let o=Object.fromEntries(new FormData(assignForm));await api('/api/cards/assign',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});assignDialog.close();await loadCards();}
-async function removeCard(card){if(!confirm('Отвязать карту '+card+' от пользователя?'))return;await api('/api/cards/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card})});await loadCards();}
+function openAssign(card){
+    if(!USERS.length)return alert('Сначала создайте пользователя');
+    assignForm.card.value=card;assignUsers.innerHTML=USERS.map(u=>`<option value="${u.id}">${u.id} — ${esc(userDisplayName(u))} (${esc(u.department||'без отдела')}) · карт: ${userCardIds(u).length}</option>`).join('');assignDialog.showModal();
+}
+async function assignCard(){
+    let o=Object.fromEntries(new FormData(assignForm));let r=await api('/api/cards/assign',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось добавить карту'));
+    assignDialog.close();await loadUsers();await loadCards();refreshStatus();
+}
+async function removeCard(card){if(!confirm('Отвязать только карту '+card+' от пользователя? Остальные карты пользователя останутся.'))return;let r=await api('/api/cards/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card})});let j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось отвязать карту');await loadUsers();await loadCards();refreshStatus();}
 async function renameController(node,name){await api('/api/controllers/name',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({node,name})});}
 async function importUsers(file){if(!file)return;let text=await file.text();let r=await api('/api/import/users',{method:'POST',headers:{'Content-Type':'text/csv'},body:text});let j=await r.json();alert(j.ok?'Импорт выполнен':'Ошибка: '+j.error);await loadUsers();await loadDepartments(false);}
 

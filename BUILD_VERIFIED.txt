@@ -92,3 +92,15 @@ v0.3.2 confirmed standard 25H card decode:
 - frame[19..20] = 0x0070 = series 112: PASS.
 - frame[23..24] = 0xD296 = card number 53910: PASS.
 - Expected formatted card: 112:53910.
+
+
+v0.3.3 multi-card users / controller-read onboarding:
+- Clean Release build: PASS ([100%] Built target monk-skud-unex).
+- User CSV backward compatibility: legacy one-card v0.3.2 row auto-migrated into cards[]: PASS.
+- New CSV cards field (pipe-separated) + legacy primary card mirror: PASS.
+- Multiple cards resolve through UserManager::byCard to one user: PASS.
+- Attendance state shared between different cards of one user (card A arrival -> card B departure): PASS.
+- HTTP API /api/users/save with two cards returns cards[] and preserves primary legacy fields: PASS.
+- HTTP API /api/cards/assign adds a third card without replacing existing cards: PASS.
+- Web UI add/remove multiple-card editor + controller-read onboarding controls: PASS (node --check web/app.js).
+- Web cache revision v=033.

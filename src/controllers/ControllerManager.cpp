@@ -328,9 +328,12 @@ void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
                 result.status="unverified";
                 result.message="Compact 87H не содержит подтверждённого series:number; сравнение карты отключено. Используйте «Поиск карты в EEPROM». "+got.message;
             }else{
-                std::uint16_t expect1=0,expect2=0;
-                std::string err;
-                const bool card_ok=util::parseCardId(local->card,expect1,expect2,&err)&&expect1==got.uid1&&expect2==got.uid2;
+                bool card_ok=false;
+                const auto& expected_cards=local->cards.empty()?std::vector<std::string>{local->card}:local->cards;
+                for(const auto&expected_card:expected_cards){
+                    std::uint16_t expect1=0,expect2=0;std::string err;
+                    if(util::parseCardId(expected_card,expect1,expect2,&err)&&expect1==got.uid1&&expect2==got.uid2){card_ok=true;break;}
+                }
                 const bool enabled_ok=!got.details_known||local->enabled==got.enabled;
                 const bool pin_ok=!got.details_known||localPinValue(*local)==got.pin;
                 const bool mode_ok=!got.details_known||(local->access_mode.empty()?"card":local->access_mode)==got.access_mode;
@@ -455,7 +458,7 @@ void ControllerManager::loop(){
                 if(log_semantic){
                     std::string msg="Событие контроллера";
                     if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);
-                    if(!evt->card.empty())msg+=", карта="+evt->card;else msg+=", карта пока не декодирована";
+                    if(evt->card.empty())msg+=", карта пока не декодирована";
                     appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);
 
                     // Never let an undecoded record block the controller FIFO forever.

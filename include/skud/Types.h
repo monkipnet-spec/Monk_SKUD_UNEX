@@ -17,8 +17,9 @@ struct User {
     std::string middle_name;
     std::string department;
     std::string position;
-    std::string card; // canonical internal card id, e.g. 112:12345
-    std::string card_series; // printed decimal series, e.g. 112
+    std::string card; // primary/legacy canonical card id, e.g. 112:12345
+    std::vector<std::string> cards; // all cards assigned to this user; first card is mirrored in card/card_series/card_number
+    std::string card_series; // primary printed decimal series, e.g. 112
     std::string card_number; // printed decimal card number
     std::string pin_code; // optional 4-digit individual PIN; empty = not configured
     std::string access_mode{"card"}; // card, card_or_pin, card_and_pin
