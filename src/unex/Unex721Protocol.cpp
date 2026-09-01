@@ -380,7 +380,30 @@ Unex721Protocol::EepromReadOutcome Unex721Protocol::readEeprom(std::uint8_t node
 
 
 RawUnexEvent Unex721Protocol::decodeEvent(std::uint8_t node,const std::vector<std::uint8_t>&f)const{
-    RawUnexEvent e;e.node=node;e.frame=f;e.raw_hex=util::hex(f);for(std::size_t i=2;i+2<f.size();++i)if(f[i]==0x0B){e.event_code=0x0B;break;}return e;
+    RawUnexEvent e;
+    e.node=node;
+    e.frame=f;
+    e.raw_hex=util::hex(f);
+
+    // Real UNEX 721 / H-series 25H event captured on hardware:
+    // 7E 1D 00 0B SRC SS MM HH WD DD MO YY ... SH SL ... NH NL ... XOR SUM
+    // For the known card 112:53910 the controller returned:
+    // ... 00 70 02 10 D2 96 ...
+    // Hence card series is bytes 19..20 and card number is bytes 23..24
+    // (zero-based frame indexes). This mapping is now confirmed by a real
+    // successful green-light access event, not inferred from 87H user data.
+    if(f.size()>=31 && f[0]==0x7E && f[3]==0x0B){
+        e.event_code=0x0B;
+        const std::uint16_t series=(static_cast<std::uint16_t>(f[19])<<8)|f[20];
+        const std::uint16_t number=(static_cast<std::uint16_t>(f[23])<<8)|f[24];
+        if(!(series==0&&number==0) && !(series==0xFFFF&&number==0xFFFF))
+            e.card=util::formatCardId(series,number);
+        return e;
+    }
+
+    // Keep unknown/short event formats visible as RAW without guessing fields.
+    for(std::size_t i=2;i+2<f.size();++i)if(f[i]==0x0B){e.event_code=0x0B;break;}
+    return e;
 }
 
 RawUnexEvent Unex721Protocol::decodeExtendedEvent(std::uint8_t node,const std::vector<std::uint8_t>&f)const{

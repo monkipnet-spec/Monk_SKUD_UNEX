@@ -85,3 +85,10 @@ v0.3.1 FIFO event drain:
 - node --check web/app.js: PASS.
 - Undecoded 25H events are persisted to data/events/undecoded_unex.csv before 37H removal.
 - Oldest-event FIFO can no longer be permanently blocked by one undecoded record.
+
+
+v0.3.2 confirmed standard 25H card decode:
+- Captured hardware frame: 7E 1D 00 0B 02 35 0B 0B 03 01 09 1A 02 03 FF 00 00 80 00 00 70 02 10 D2 96 12 34 56 78 82 83.
+- frame[19..20] = 0x0070 = series 112: PASS.
+- frame[23..24] = 0xD296 = card number 53910: PASS.
+- Expected formatted card: 112:53910.
