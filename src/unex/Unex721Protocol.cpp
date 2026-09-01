@@ -3,7 +3,9 @@
 #include "skud/Util.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <ctime>
+#include <thread>
 #include <limits>
 #include <sstream>
 
@@ -11,19 +13,6 @@ namespace skud {
 namespace {
 constexpr std::uint8_t ACK=0x04;
 constexpr std::uint8_t NACK=0x05;
-
-void expiryBytes(const std::string& valid_until,std::uint8_t& yy,std::uint8_t& mm,std::uint8_t& dd){
-    yy=99;mm=12;dd=31;
-    if(valid_until.size()<10||valid_until[4]!='-'||valid_until[7]!='-')return;
-    try{
-        const int y=std::stoi(valid_until.substr(0,4));
-        const int m=std::stoi(valid_until.substr(5,2));
-        const int d=std::stoi(valid_until.substr(8,2));
-        if(y>=2000&&y<=2099&&m>=1&&m<=12&&d>=1&&d<=31){
-            yy=static_cast<std::uint8_t>(y%100);mm=static_cast<std::uint8_t>(m);dd=static_cast<std::uint8_t>(d);
-        }
-    }catch(...){}
-}
 
 bool parsePin(const std::string& pin,std::uint32_t& out,std::string& error){
     const auto s=util::trim(pin);out=0;
@@ -36,27 +25,30 @@ bool parsePin(const std::string& pin,std::uint32_t& out,std::string& error){
     }catch(...){error="Неверный PIN";return false;}
 }
 
-std::uint8_t accessModeByte(const User& user){
-    // 0x58 is the known enabled-card value used by the H-series 84H layout.
-    // Bits 7/6 select card-only / card-or-PIN / card-and-PIN.
-    constexpr std::uint8_t low=0x18;
-    if(user.access_mode=="card_or_pin")return static_cast<std::uint8_t>(0x80|low); // 0x98
-    if(user.access_mode=="card_and_pin")return static_cast<std::uint8_t>(0xC0|low); // 0xD8
-    return static_cast<std::uint8_t>(0x40|low); // 0x58
+// AR-721H/727H Protocol v1.2, command 83H/87H:
+// 00 = Invalid, 01 = Card Only (manual says "Read Only" on 83H page),
+// 02 = Card OR PIN, 03 = Card + PIN.
+// Section 3.1 has a conflicting 02/03 comment; the command pages 35/36 are
+// internally consistent, so the wire implementation follows 83H/87H.
+std::uint8_t hAccessModeByte(const User& user){
+    if(!user.enabled)return 0x00;
+    if(user.access_mode=="card_or_pin")return 0x02;
+    if(user.access_mode=="card_and_pin")return 0x03;
+    return 0x01;
 }
 
-std::string accessModeText(const User& user){
-    if(user.access_mode=="card_or_pin")return "карта ИЛИ PIN";
-    if(user.access_mode=="card_and_pin")return "карта + PIN";
-    return "только карта";
-}
-
-std::string accessModeFromByte(std::uint8_t mode){
-    switch(mode&0xC0){
-        case 0x80:return "card_or_pin";
-        case 0xC0:return "card_and_pin";
-        default:return "card";
+std::string hAccessModeFromByte(std::uint8_t mode){
+    switch(mode){
+        case 0x02:return "card_or_pin";
+        case 0x03:return "card_and_pin";
+        case 0x00:
+        case 0x01:return "card";
+        default:return {};
     }
+}
+
+std::string bytesHex(const std::vector<std::uint8_t>& bytes){
+    return util::hex(bytes);
 }
 }
 
@@ -165,97 +157,83 @@ bool Unex721Protocol::setSystemTime(std::uint8_t node){
 }
 
 bool Unex721Protocol::userWriteSupported(){return true;}
-std::string Unex721Protocol::userWriteSupportMessage(){return "Экспериментальная запись UNEX 721 H-series: 84H Set Card/User отправляется через подтверждённый standard 0x7E. Перед записью выполняется 87H, после ACK — повторный 87H. Для compact 8B карта/PIN пока не декодируются, поэтому окончательная проверка выполняется реальным проходом карты.";}
+std::string Unex721Protocol::userWriteSupportMessage(){
+    return "H-series user upload: official 83H Set User Data over standard 0x7E, User Address 1..1023, with mandatory 87H byte-for-byte read-back verification. 84H is not used for writing.";
+}
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,const User& user){
-    if(!user.enabled)return{false,"skipped","Пользователь отключен"};
-    if(user.card.empty())return{false,"skipped","У пользователя не задана основная карта"};
-    if(user.controller_port<=0||user.controller_port>16383)return{false,"skipped","Порт/адрес пользователя должен быть 1..16383"};
+    const int address=user.controller_port;
+    if(address<=0||address>1023)
+        return{false,"skipped","Для AR-721H/727H допустимый User Address 1..1023 (по Memory Layout протокола)"};
 
-    std::uint16_t uid1=0,uid2=0;std::string parse_error;
-    if(!util::parseCardId(user.card,uid1,uid2,&parse_error))return{false,"error",parse_error};
-    std::uint32_t pin=0;
-    if(!parsePin(user.pin_code,pin,parse_error))return{false,"error",parse_error};
-    if((user.access_mode=="card_or_pin"||user.access_mode=="card_and_pin")&&user.pin_code.empty())
-        return{false,"error","Для выбранного PIN-режима у пользователя не задан PIN"};
+    std::string card=user.card;
+    if(card.empty()&&!user.cards.empty())card=user.cards.front();
+    std::uint16_t site=0,card_code=0;
+    std::string error;
+    if(!util::parseCardId(card,site,card_code,&error))
+        return{false,"invalid_user","Некорректная основная карта: "+error};
 
-    const auto address=static_cast<std::uint16_t>(user.controller_port);
+    std::uint32_t pin32=0;
+    if(!parsePin(user.pin_code,pin32,error))return{false,"invalid_user",error};
+    if((user.access_mode=="card_or_pin"||user.access_mode=="card_and_pin")&&pin32==0)
+        return{false,"invalid_user","Для режима доступа с PIN необходимо задать PIN пользователя"};
+    const auto pin=static_cast<std::uint16_t>(pin32);
 
-    // Safety probe: prove that this node/address is readable before modifying it.
-    // It also gives us a before/after RAW comparison for the real compact 8B format.
-    const auto before=readUser(node,address);
-    if(!before.ok)return{false,"error","Запись 84H не отправлена: предварительное чтение 87H не удалось: "+before.message};
+    // Safety pre-read. For an existing slot preserve its valid time-zone.
+    // A new/empty slot defaults to time zone 1, matching the 83H manual example.
+    auto before=readUser(node,address);
+    if(!before.ok)
+        return{false,"precheck_failed","83H не отправлен: не удалось выполнить контрольный 87H до записи: "+before.message};
+    std::uint8_t zone=0x01;
+    if(before.present&&before.raw_record.size()==8&&before.raw_record[7]<=0x0B)zone=before.raw_record[7];
 
-    std::uint8_t yy=99,mm=12,dd=31;expiryBytes(user.valid_until,yy,mm,dd);
-    const std::vector<std::uint8_t> data={
-        0x01, // number of user records
-        static_cast<std::uint8_t>((address>>8)&0xFF),static_cast<std::uint8_t>(address&0xFF),
-        0,0,0,0,
-        static_cast<std::uint8_t>((uid1>>8)&0xFF),static_cast<std::uint8_t>(uid1&0xFF),
-        static_cast<std::uint8_t>((uid2>>8)&0xFF),static_cast<std::uint8_t>(uid2&0xFF),
-        static_cast<std::uint8_t>((pin>>24)&0xFF),
-        static_cast<std::uint8_t>((pin>>16)&0xFF),
-        static_cast<std::uint8_t>((pin>>8)&0xFF),
-        static_cast<std::uint8_t>(pin&0xFF),
-        accessModeByte(user),
-        0x00,       // zone
-        0xFF,0xFF,  // groups
-        yy,mm,dd,
-        0x00,       // level
-        0,0,0,0
+    const auto mode=hAccessModeByte(user);
+    std::vector<std::uint8_t> expected={
+        static_cast<std::uint8_t>((site>>8)&0xFF),static_cast<std::uint8_t>(site&0xFF),
+        static_cast<std::uint8_t>((card_code>>8)&0xFF),static_cast<std::uint8_t>(card_code&0xFF),
+        static_cast<std::uint8_t>((pin>>8)&0xFF),static_cast<std::uint8_t>(pin&0xFF),
+        mode,zone
     };
+    const auto a=static_cast<std::uint16_t>(address);
+    std::vector<std::uint8_t> payload={
+        static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF)
+    };
+    payload.insert(payload.end(),expected.begin(),expected.end());
 
-    // IMPORTANT: do not use the old Extended envelope here. Real UNEX 721
-    // hardware has been confirmed on standard 0x7E; the 27-byte 84H body fits
-    // comfortably in a standard packet.
-    auto r=transact(node,0x84,data,550);
-    if(!r)return{false,"error","Нет корректного standard 0x7E ответа на 84H Set Card/User"};
-    if(r->size()<6)return{false,"error","Короткий ответ контроллера на 84H: "+util::hex(*r)};
-    const auto code=(*r)[3];
-    if(code==NACK)return{false,"error","Контроллер вернул NACK на 84H Set Card/User"};
-    if(code!=ACK){
-        std::ostringstream m;m<<"Неожиданный ответ на 84H: function=0x"<<std::hex<<std::uppercase<<static_cast<int>(code)<<" RAW="<<util::hex(*r);
-        return{false,"error",m.str()};
+    auto ack=transact(node,0x83,payload,500);
+    if(!ack)return{false,"write_timeout","Нет ответа на 83H Set User Data"};
+    if(ack->size()<6)return{false,"write_error","Короткий ответ на 83H: "+util::hex(*ack)};
+    if((*ack)[3]==NACK)return{false,"write_nack","Контроллер вернул NACK на 83H: "+util::hex(*ack)};
+    if((*ack)[3]!=ACK){
+        std::ostringstream m;m<<"Неожиданный ответ 83H code=0x"<<std::hex<<std::uppercase<<static_cast<int>((*ack)[3])<<": "<<util::hex(*ack);
+        return{false,"write_error",m.str()};
     }
 
-    const auto after=readUser(node,address);
-    if(!after.ok)return{false,"error","Контроллер подтвердил 84H, но контрольное чтение 87H не удалось: "+after.message};
-
-    // On controllers returning the documented/enterprise 24B record we can
-    // verify every field. On the real UNEX compact 8B record, its card/PIN
-    // layout is still unknown, so ACK + successful 87H is deliberately
-    // reported as unverified and the operator must test the physical card.
-    if(after.card_known&&after.details_known){
-        const bool mode_ok=(after.mode&0xC0)==(accessModeByte(user)&0xC0);
-        if(!after.present||after.uid1!=uid1||after.uid2!=uid2||after.pin!=pin||!after.enabled||!mode_ok){
-            std::ostringstream m;
-            m<<"84H ACK, но 87H read-back не совпал: ожидалось "<<util::formatCardId(uid1,uid2)
-             <<", получено "<<util::formatCardId(after.uid1,after.uid2)
-             <<", PIN="<<(after.pin==pin?"OK":"DIFF")<<", mode="<<(mode_ok?"OK":"DIFF");
-            return{false,"error",m.str()};
-        }
-        std::ostringstream m;
-        m<<"Записан и полностью проверен 87H: адрес "<<address<<", карта "<<util::formatCardSeries(uid1)<<" / "<<uid2
-         <<", режим "<<accessModeText(user);
-        if(!user.pin_code.empty())m<<", PIN записан";
-        return{true,"ok",m.str()};
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    auto after=readUser(node,address);
+    if(!after.ok)
+        return{false,"verify_failed","83H получил ACK, но контрольный 87H не удался: "+after.message};
+    if(after.raw_record.size()!=8)
+        return{false,"verify_failed","83H получил ACK, но 87H вернул неожиданный формат "+std::to_string(after.raw_record.size())+"B: "+after.raw_record_hex};
+    if(after.raw_record!=expected){
+        return{false,"verify_failed","83H получил ACK, но данные НЕ записались. Ожидалось 87H RAW="+bytesHex(expected)+", получено="+after.raw_record_hex};
     }
 
     std::ostringstream m;
-    m<<"84H ACK; контрольный compact 87H получен. Адрес "<<address<<", карта к записи "
-     <<util::formatCardSeries(uid1)<<" / "<<uid2<<", режим "<<accessModeText(user)<<". ";
-    if(before.raw_record_hex!=after.raw_record_hex)
-        m<<"RAW изменился: "<<before.raw_record_hex<<" -> "<<after.raw_record_hex<<". ";
-    else
-        m<<"RAW 87H не изменился: "<<after.raw_record_hex<<". ";
-    m<<"Compact 8B пока не позволяет побайтово проверить Card/PIN — проверьте запись реальным проходом карты.";
-    return{true,"ok_unverified",m.str()};
+    m<<"Записано и подтверждено 87H: address="<<address
+     <<", карта="<<util::formatCardId(site,card_code)
+     <<", PIN="<<(pin?user.pin_code:"0000")
+     <<", mode="<<static_cast<int>(mode)
+     <<", zone="<<static_cast<int>(zone)
+     <<", RAW="<<after.raw_record_hex;
+    if(user.cards.size()>1)m<<"; в контроллер записана основная карта (у пользователя локально карт: "<<user.cards.size()<<")";
+    return{true,"written_verified",m.str()};
 }
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
     (void)node;
     (void)user;
-    return{false,"blocked_protocol","Удаление из контроллера пока оставлено заблокированным. В v0.3.9 включена только запись пользователя 84H через standard 0x7E; удаление будет включено после аппаратной проверки записи."};
+    return{false,"blocked_protocol","Удаление из контроллера пока заблокировано отдельно: для выгрузки уже используется официальный 83H, но безопасная семантика очистки одного user slot будет включена после аппаратной проверки записи."};
 }
 
 Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int address){
@@ -319,22 +297,31 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
     }
     const std::size_t data_len=data_end-data_begin;
     std::vector<std::uint8_t> record(r->begin()+static_cast<std::ptrdiff_t>(data_begin),r->begin()+static_cast<std::ptrdiff_t>(data_end));
+    out.raw_record=record;
     out.raw_record_hex=util::hex(record);
 
     if(data_len==8){
-        // Real UNEX 721 capture. Known control samples disproved the old
-        // assumption that bytes 0..3 are direct series:number:
-        // user 7 = card 112:53910, PIN 0031 -> RAW 00 A4 31 F1 00 00 01 01;
-        // user 5 = card 40:32010, PIN 1234 -> RAW 00 00 00 00 04 D2 00 00.
-        // Keep the whole record raw and do not invent card/PIN semantics.
+        // Official AR-721H/727H 87H record (Protocol v1.2, section 2.20):
+        // SiteH SiteL CardH CardL PINH PINL Mode Zone.
         const bool all_zero=std::all_of(record.begin(),record.end(),[](std::uint8_t b){return b==0x00;});
+        out.uid1=(static_cast<std::uint16_t>(record[0])<<8)|record[1];
+        out.uid2=(static_cast<std::uint16_t>(record[2])<<8)|record[3];
+        out.pin=(static_cast<std::uint32_t>(record[4])<<8)|record[5];
+        out.mode=record[6];
+        out.access_mode=hAccessModeFromByte(out.mode);
         out.present=!all_zero;
-        out.enabled=out.present;
-        out.uid1=0;out.uid2=0;out.pin=0;out.mode=0;out.access_mode.clear();
-        out.card_known=false;out.details_known=false;out.ok=true;
+        out.enabled=out.mode!=0;
+        out.card_known=true;
+        out.details_known=out.mode<=3;
+        out.ok=true;
         std::ostringstream m;
-        if(out.present)m<<"Адрес "<<address<<": compact H/UNEX 8B, карта/PIN не декодированы; RAW="<<out.raw_record_hex;
-        else m<<"Адрес "<<address<<" пуст [H/UNEX compact 8B; RAW="<<out.raw_record_hex<<"]";
+        if(!out.present)m<<"Адрес "<<address<<" пуст [87H RAW="<<out.raw_record_hex<<"]";
+        else{
+            m<<"Адрес "<<address<<": карта "<<util::formatCardId(out.uid1,out.uid2)
+             <<", PIN "<<out.pin<<", mode "<<static_cast<int>(out.mode)
+             <<", zone "<<static_cast<int>(record[7])<<", RAW="<<out.raw_record_hex;
+            if(!out.details_known)m<<" [неизвестный mode]";
+        }
         out.message=m.str();return out;
     }
 
@@ -356,7 +343,7 @@ Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int
         out.mode=(*r)[mode_i];
         out.enabled=out.mode>0;
         out.present=!(out.mode==0&&out.uid1==0xFFFF&&out.uid2==0xFFFF);
-        out.access_mode=accessModeFromByte(out.mode);
+        out.access_mode=hAccessModeFromByte(out.mode);
         out.details_known=true;
         out.ok=true;
         std::ostringstream m;

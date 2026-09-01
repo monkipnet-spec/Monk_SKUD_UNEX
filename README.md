@@ -439,3 +439,31 @@ MariaDB расширена с пользователей на отделы, ко
 - Записывается основная карта пользователя (`user.card`) в его `controller_port`/SOYAL Address. Дополнительные карты автоматически в соседние адреса не размножаются.
 - Удаление пользователей из контроллера пока остаётся заблокированным до аппаратной проверки новой записи `84H`.
 - Диалог массовой выгрузки явно предупреждает о экспериментальном режиме и рекомендует первый тест на одном пользователе.
+
+## v0.3.10 — hardware-safe compact 87H EEPROM locator
+- **v0.3.9 84H user upload is disabled** after the real UNEX 721 test showed that an ACK did not replace the physical card credential.
+- The H/E-style long 84H payload is no longer treated as a valid compact UNEX 721 writer.
+- EEPROM diagnostics can now optionally probe one or more User Addresses with safe `87H` first (for the current hardware research use `5,7`).
+- For each real compact 8-byte `87H` record, the existing `12H Read EEPROM` scan searches the EEPROM for that **exact 8-byte sequence** and reports its EEPROM address and surrounding RAW context.
+- The diagnostic is read-only. `20H` user writes remain blocked until the real compact record location/layout is confirmed; any future write must use mandatory `12H` read-back verification.
+
+
+## v0.3.11 — official H-series 83H user upload
+
+The supplied official **AR-721H / AR-727H Communication Protocol v1.2** resolves the user-write format:
+
+- `83H` = **Setting Card Content / Set User Data**.
+- `87H` = **Reading Card Content / Get User Data**.
+- `84H` = **Stopping Waiting for Response** and must not be used as a user-write command.
+- The H-series user record returned by `87H` is exactly 8 bytes: `SiteH SiteL CardH CardL PINH PINL Mode Zone`.
+- `83H` sends `AddrH AddrL` followed by those same 8 bytes.
+
+v0.3.11 therefore enables upload through the confirmed standard `0x7E` transport:
+
+1. Validate H-series User Address (`1..1023` in this application; the protocol memory map defines User 0..1023).
+2. `87H` pre-read of the target address.
+3. `83H` write of Site/Card/PIN/Mode/Zone.
+4. ACK is required but is **not** considered sufficient.
+5. `87H` read-back must return the exact expected 8 bytes; otherwise the operation is reported as failed.
+
+Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=Card or PIN`, `3=Card + PIN`. The manual's generic data-structure page contains a conflicting 2/3 comment, so the actual command definition is used. Existing valid time-zone byte is preserved; an empty/new slot defaults to zone 1.

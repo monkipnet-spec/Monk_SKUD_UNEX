@@ -184,6 +184,8 @@ struct ControllerEepromSearchJob {
     std::string state; // queued, running, completed
     int card_series{};
     int card_number{};
+    std::vector<int> compact_user_addresses;
+    std::vector<std::string> compact_probes;
     int start_address{};
     int end_address{0xFFFF};
     int block_size{64};

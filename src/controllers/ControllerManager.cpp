@@ -245,10 +245,14 @@ std::optional<ControllerUserReadJob> ControllerManager::userReadJob(std::uint64_
     return it->second;
 }
 
-std::uint64_t ControllerManager::queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size){
+std::uint64_t ControllerManager::queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size,std::vector<int> compact_user_addresses){
+    std::sort(compact_user_addresses.begin(),compact_user_addresses.end());
+    compact_user_addresses.erase(std::remove_if(compact_user_addresses.begin(),compact_user_addresses.end(),[](int a){return a<1||a>16383;}),compact_user_addresses.end());
+    compact_user_addresses.erase(std::unique(compact_user_addresses.begin(),compact_user_addresses.end()),compact_user_addresses.end());
     std::lock_guard lk(eeprom_mu_);
     const auto id=next_eeprom_id_++;
     ControllerEepromSearchJob job;job.id=id;job.created_at=util::nowLocal();job.card_series=card_series;job.card_number=card_number;
+    job.compact_user_addresses=compact_user_addresses;
     job.start_address=start_address;job.end_address=end_address;job.block_size=block_size;
     const int blocks=(end_address-start_address+block_size)/block_size;
     job.total=static_cast<int>(controller_nodes.size())*blocks;
@@ -256,7 +260,7 @@ std::uint64_t ControllerManager::queueEepromSearch(int card_series,int card_numb
     eeprom_jobs_[id]=job;
     if(job.state=="queued"){
         PendingEepromSearch p;p.id=id;p.card_series=card_series;p.card_number=card_number;p.controller_nodes=std::move(controller_nodes);
-        p.start_address=start_address;p.end_address=end_address;p.block_size=block_size;p.next_address=start_address;eeprom_queue_.push_back(std::move(p));
+        p.start_address=start_address;p.end_address=end_address;p.block_size=block_size;p.next_address=start_address;p.compact_user_addresses=std::move(compact_user_addresses);eeprom_queue_.push_back(std::move(p));
     }
     while(eeprom_jobs_.size()>12)eeprom_jobs_.erase(eeprom_jobs_.begin());
     return id;
@@ -270,7 +274,9 @@ void ControllerManager::processEepromSearchBatch(Unex721Protocol& proto){
     constexpr int batch_size=4;
     constexpr std::size_t max_results=500;
     for(int batch=0;batch<batch_size&&running_;++batch){
-        std::uint64_t job_id=0;int node=0,start=0,end=0,block_size=64,series=0,number=0;bool last_task=false;
+        std::uint64_t job_id=0;int node=0,start=0,end=0,block_size=64,series=0,number=0;bool last_task=false,need_compact_probe=false;
+        std::vector<int> probe_addresses;
+        std::vector<std::pair<int,std::vector<std::uint8_t>>> compact_records;
         {
             std::lock_guard lk(eeprom_mu_);
             if(eeprom_queue_.empty())return;
@@ -279,17 +285,46 @@ void ControllerManager::processEepromSearchBatch(Unex721Protocol& proto){
             it->second.state="running";
             if(p.controller_index>=p.controller_nodes.size()){it->second.state="completed";eeprom_queue_.pop_front();continue;}
             job_id=p.id;node=p.controller_nodes[p.controller_index];start=p.next_address;end=p.end_address;block_size=p.block_size;series=p.card_series;number=p.card_number;
+            if(!p.compact_user_addresses.empty()&&!p.compact_probed_nodes.count(node)){
+                need_compact_probe=true;probe_addresses=p.compact_user_addresses;p.compact_probed_nodes.insert(node);
+            }else{
+                auto rit=p.compact_records.find(node);if(rit!=p.compact_records.end())compact_records=rit->second;
+            }
             p.next_address+=block_size;
             if(p.next_address>end){++p.controller_index;p.next_address=p.start_address;}
             last_task=p.controller_index>=p.controller_nodes.size();
         }
+
+        if(need_compact_probe){
+            std::vector<std::string> notes;
+            for(int address:probe_addresses){
+                const auto u=proto.readUser(static_cast<std::uint8_t>(node),address);
+                std::ostringstream note;note<<"Node "<<node<<", user "<<address<<": ";
+                if(!u.ok){note<<"87H ERROR — "<<u.message;}
+                else if(!u.present){note<<"87H empty — RAW="<<u.raw_record_hex;}
+                else if(u.raw_record.size()!=8){note<<"87H record "<<u.raw_record.size()<<"B; compact exact search skipped — RAW="<<u.raw_record_hex;}
+                else{
+                    compact_records.emplace_back(address,u.raw_record);
+                    note<<"compact 8B RAW="<<u.raw_record_hex<<"; exact EEPROM search enabled";
+                }
+                notes.push_back(note.str());
+            }
+            std::lock_guard lk(eeprom_mu_);
+            if(!eeprom_queue_.empty()&&eeprom_queue_.front().id==job_id)eeprom_queue_.front().compact_records[node]=compact_records;
+            auto jit=eeprom_jobs_.find(job_id);if(jit!=eeprom_jobs_.end())for(auto&n:notes)jit->second.compact_probes.push_back(std::move(n));
+        }
+
         const int core_len=std::min(block_size,end-start+1);
         const int read_len=std::min(core_len+12,0x10000-start); // overlap catches patterns crossing a block boundary and gives context
         auto got=proto.readEeprom(static_cast<std::uint8_t>(node),start,read_len);
         std::vector<ControllerEepromSearchMatch> found;
         ControllerEepromSearchError error;
         if(got.ok){
-            const auto patterns=eepromPatterns(series,number);
+            auto patterns=eepromPatterns(series,number);
+            for(const auto& rec:compact_records){
+                if(rec.second.empty())continue;
+                EepromPattern p;p.name="87H compact user "+std::to_string(rec.first)+" (8B exact)";p.bytes=rec.second;p.exact=true;patterns.push_back(std::move(p));
+            }
             for(const auto& pat:patterns){
                 if(pat.bytes.empty()||got.data.size()<pat.bytes.size())continue;
                 for(std::size_t pos=0;pos+pat.bytes.size()<=got.data.size();++pos){

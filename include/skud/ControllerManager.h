@@ -8,6 +8,7 @@
 #include <mutex>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -52,7 +53,7 @@ public:
 
     // Read-only H-series EEPROM diagnostic. Searches several common binary/BCD
     // representations of a known series:number card without writing anything.
-    std::uint64_t queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size);
+    std::uint64_t queueEepromSearch(int card_series,int card_number,std::vector<int> controller_nodes,int start_address,int end_address,int block_size,std::vector<int> compact_user_addresses={});
     std::optional<ControllerEepromSearchJob> eepromSearchJob(std::uint64_t id) const;
 
     // In-memory live protocol ring buffer for web diagnostics.
@@ -79,6 +80,9 @@ private:
         int start_address{};
         int end_address{0xFFFF};
         int block_size{64};
+        std::vector<int> compact_user_addresses;
+        std::set<int> compact_probed_nodes;
+        std::map<int,std::vector<std::pair<int,std::vector<std::uint8_t>>>> compact_records;
         std::size_t controller_index{};
         int next_address{};
     };

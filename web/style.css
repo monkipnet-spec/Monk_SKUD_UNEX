@@ -60,3 +60,5 @@ header{position:relative}
 .presence-values>em{font-style:normal;font-size:13px;color:#c0ccd7}
 @media(max-width:1100px){.header-clock{position:static;transform:none;min-width:150px}.header-clock>b{font-size:18px}.header-clock>span{font-size:10px}}
 @media(max-width:800px){header{flex-wrap:wrap}.header-clock{order:2;margin-left:auto}.header-right{order:3;width:100%;justify-content:flex-end}.site-presence{min-width:135px}}
+
+.eeprom-compact-probe{margin-top:12px;padding:10px;border:1px solid var(--line,#d0d7de);border-radius:8px}.eeprom-compact-probe label{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.eeprom-compact-probe input{font-family:Consolas,"Courier New",monospace;min-width:180px}.eeprom-compact-probe small{display:block;margin-top:6px}

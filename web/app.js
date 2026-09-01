@@ -146,7 +146,7 @@ function parseHex16(v){const s=String(v||'').trim();if(!/^[0-9a-fA-F]{1,4}$/.tes
 async function openEepromSearch(series='',number=''){
     await loadControllers();
     eepromAllControllers.checked=true;
-    eepromCardSeries.value=series||'';eepromCardNumber.value=number||'';eepromStart.value='0000';eepromEnd.value='FFFF';eepromBlockSize.value='64';
+    eepromCardSeries.value=series||'';eepromCardNumber.value=number||'';eepromCompactAddresses.value='5,7';eepromStart.value='0000';eepromEnd.value='FFFF';eepromBlockSize.value='64';
     eepromControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="eeprom-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
     eepromSearchResult.innerHTML='';toggleEepromControllers();updateEepromSearchSummary();eepromSearchDialog.showModal();
 }
@@ -155,25 +155,27 @@ function selectedEepromControllers(){return [...document.querySelectorAll('.eepr
 function updateEepromSearchSummary(){
     if(!window.eepromSearchSummary)return;const from=parseHex16(eepromStart.value),to=parseHex16(eepromEnd.value),block=Number(eepromBlockSize.value)||64;
     const controllers=eepromAllControllers.checked?CONTROLLERS.length:selectedEepromControllers().length;const bytes=Number.isFinite(from)&&Number.isFinite(to)&&to>=from?to-from+1:0;const blocks=bytes?Math.ceil(bytes/block):0;
-    eepromSearchSummary.innerHTML=`Диапазон: <b>${bytes?hex4(from)+'..'+hex4(to):'ошибка'}</b> · ${bytes} байт · <b>${blocks}</b> блок(ов) × <b>${controllers}</b> контроллер(ов) = <b>${blocks*controllers}</b> операций 12H.`;
+    const compact=String(eepromCompactAddresses.value||'').trim();eepromSearchSummary.innerHTML=`Compact 87H: <b>${esc(compact||'не задан')}</b> · Диапазон: <b>${bytes?hex4(from)+'..'+hex4(to):'ошибка'}</b> · ${bytes} байт · <b>${blocks}</b> блок(ов) × <b>${controllers}</b> контроллер(ов) = <b>${blocks*controllers}</b> операций 12H.`;
 }
-document.addEventListener('input',e=>{if(e.target.matches&&e.target.matches('#eepromCardSeries,#eepromCardNumber,#eepromStart,#eepromEnd'))updateEepromSearchSummary();});
+document.addEventListener('input',e=>{if(e.target.matches&&e.target.matches('#eepromCardSeries,#eepromCardNumber,#eepromCompactAddresses,#eepromStart,#eepromEnd'))updateEepromSearchSummary();});
 document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.eeprom-controller,#eepromBlockSize'))updateEepromSearchSummary();});
 function renderEepromSearchJob(job){
     const state=({queued:'В очереди',running:'Чтение EEPROM',completed:'Завершено'})[job.state]||job.state;
     const rows=(job.matches||[]).map(m=>{const c=CONTROLLERS.find(x=>x.node===m.controller_node);return `<tr><td>${m.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td><code>0x${hex4(m.eeprom_address)}</code></td><td>${m.exact?'<span class="status-pill status-present">точное</span>':'<span class="status-pill">частичное</span>'}<small class="table-subtext">${esc(m.pattern)}</small></td><td><code>${esc(m.matched_hex)}</code></td><td><code class="eeprom-context">${esc(m.context_hex)}</code></td></tr>`;}).join('');
     const errs=(job.errors||[]).map(e=>`<div class="bad">Node ${e.controller_node}, EEPROM 0x${hex4(e.eeprom_address)}: ${esc(e.message)}</div>`).join('');
     const trunc=job.truncated?'<div class="protocol-warning">Результатов больше 500; список ограничен. Сузьте диапазон EEPROM.</div>':'';
-    eepromSearchResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} блоков · совпадений ${(job.matches||[]).length} · ошибок ${job.failed}</div>${trunc}${rows?`<div class="upload-result-table eeprom-result-table"><table><thead><tr><th>Контроллер</th><th>EEPROM</th><th>Тип</th><th>Совпало</th><th>Контекст RAW</th></tr></thead><tbody>${rows}</tbody></table></div>`:(job.state==='completed'?'<div class="protocol-warning">Прямых совпадений известных представлений карты не найдено. Это тоже диагностический результат: карта может храниться в преобразованном формате или в другой области памяти.</div>':'')}${errs?`<div class="eeprom-errors">${errs}</div>`:''}`;
+    const probes=(job.compact_probes||[]).map(x=>`<div><code>${esc(x)}</code></div>`).join('');
+    const probeBox=probes?`<div class="protocol-warning"><b>Compact 87H probes:</b>${probes}</div>`:'';
+    eepromSearchResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} блоков · совпадений ${(job.matches||[]).length} · ошибок ${job.failed}</div>${probeBox}${trunc}${rows?`<div class="upload-result-table eeprom-result-table"><table><thead><tr><th>Контроллер</th><th>EEPROM</th><th>Тип</th><th>Совпало</th><th>Контекст RAW</th></tr></thead><tbody>${rows}</tbody></table></div>`:(job.state==='completed'?'<div class="protocol-warning">Прямых совпадений известных представлений карты не найдено. Это тоже диагностический результат: карта может храниться в преобразованном формате или в другой области памяти.</div>':'')}${errs?`<div class="eeprom-errors">${errs}</div>`:''}`;
 }
 async function pollEepromSearch(jobId){for(let n=0;n<10000;n++){const r=await api('/api/controllers/eeprom-search/status?job_id='+encodeURIComponent(jobId));if(!r.ok)return;const job=await r.json();renderEepromSearchJob(job);if(job.state!=='queued'&&job.state!=='running')return;await new Promise(resolve=>setTimeout(resolve,700));}}
 async function startEepromSearch(){
-    const series=Number(eepromCardSeries.value),number=Number(eepromCardNumber.value),from=parseHex16(eepromStart.value),to=parseHex16(eepromEnd.value),block=Number(eepromBlockSize.value)||64,nodes=selectedEepromControllers();
-    if(!Number.isInteger(series)||series<0||series>65535)return alert('Серия карты должна быть 0..65535');if(!Number.isInteger(number)||number<0||number>65535)return alert('Номер карты должен быть 0..65535');if(!Number.isFinite(from)||!Number.isFinite(to)||from<0||to>0xFFFF||from>to)return alert('Диапазон EEPROM должен быть HEX 0000..FFFF');
+    const series=Number(eepromCardSeries.value),number=Number(eepromCardNumber.value),compact=String(eepromCompactAddresses.value||'').trim(),from=parseHex16(eepromStart.value),to=parseHex16(eepromEnd.value),block=Number(eepromBlockSize.value)||64,nodes=selectedEepromControllers();
+    if(!Number.isInteger(series)||series<0||series>65535)return alert('Серия карты должна быть 0..65535');if(compact&&!/^\s*\d+(?:\s*,\s*\d+)*\s*$/.test(compact))return alert('Адреса compact 87H задайте числами, например 5,7');if(!Number.isInteger(number)||number<0||number>65535)return alert('Номер карты должен быть 0..65535');if(!Number.isFinite(from)||!Number.isFinite(to)||from<0||to>0xFFFF||from>to)return alert('Диапазон EEPROM должен быть HEX 0000..FFFF');
     if(!eepromAllControllers.checked&&!nodes.length)return alert('Выберите контроллер');if(eepromAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
     const controllerCount=eepromAllControllers.checked?CONTROLLERS.length:nodes.length,ops=Math.ceil((to-from+1)/block)*controllerCount;if(ops>500&&!confirm(`Полное чтение потребует ${ops} операций 12H и может занять несколько минут. Продолжить?`))return;
     startEepromSearchButton.disabled=true;eepromSearchResult.innerHTML='<div class="muted">Создание задания безопасного чтения EEPROM...</div>';
-    try{const r=await api('/api/controllers/eeprom-search',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card_series:String(series),card_number:String(number),all_controllers:eepromAllControllers.checked?'1':'0',controller_nodes:nodes.join(','),start_address:String(from),end_address:String(to),block_size:String(block)})});const j=await r.json();if(!r.ok||!j.ok){eepromSearchResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось начать поиск')+'</div>';return;}await pollEepromSearch(j.job_id);}finally{startEepromSearchButton.disabled=false;}
+    try{const r=await api('/api/controllers/eeprom-search',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({card_series:String(series),card_number:String(number),compact_addresses:compact,all_controllers:eepromAllControllers.checked?'1':'0',controller_nodes:nodes.join(','),start_address:String(from),end_address:String(to),block_size:String(block)})});const j=await r.json();if(!r.ok||!j.ok){eepromSearchResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось начать поиск')+'</div>';return;}await pollEepromSearch(j.job_id);}finally{startEepromSearchButton.disabled=false;}
 }
 
 async function openUserRead(){
@@ -339,13 +341,13 @@ async function startUserUpload(){
     if(!uploadAllControllers.checked&&!nodes.length)return alert('Выберите хотя бы один контроллер');
     if(uploadAllUsers.checked&&!USERS.length)return alert('Нет пользователей для выгрузки');
     if(uploadAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
-    if(!confirm(`Выгрузить ${uploadAllUsers.checked?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?\n\nUNEX 721: будет отправлена H-series команда 84H через standard 0x7E. После ACK выполняется 87H. Для compact 8B окончательно проверьте результат реальным проходом карты. Для первого теста рекомендуется выбрать одного пользователя.`))return;
+    if(!confirm(`Выгрузить ${uploadAllUsers.checked?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?\n\nИспользуется официальный H-series 83H Set User Data. Успех засчитывается только после контрольного 87H и точного совпадения 8 байт.`))return;
     startUploadButton.disabled=true;uploadResult.innerHTML='<div class="muted">Создание задания...</div>';
     try{
         const r=await api('/api/controllers/upload-users',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({all_users:uploadAllUsers.checked?'1':'0',user_ids:userIds.join(','),all_controllers:uploadAllControllers.checked?'1':'0',controller_nodes:nodes.join(',')})});
         const j=await r.json();
         if(!r.ok||!j.ok){uploadResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось создать задание')+'</div>';return;}
-        if(!j.protocol_ready)uploadResult.innerHTML='<div class="protocol-warning"><b>Аппаратная запись недоступна.</b><br>'+esc(j.protocol_message||'Протокол записи не готов')+'</div>';else uploadResult.innerHTML='<div class="upload-job-state"><b>UNEX H-series 84H / standard 0x7E активен.</b><br>'+esc(j.protocol_message||'')+'</div>';
+        if(!j.protocol_ready)uploadResult.innerHTML='<div class="protocol-warning"><b>Аппаратная запись недоступна.</b><br>'+esc(j.protocol_message||'Протокол записи не готов')+'</div>';else uploadResult.innerHTML='<div class="upload-job-state"><b>UNEX H-series 83H / standard 0x7E активен.</b><br>'+esc(j.protocol_message||'')+'</div>';
         await pollUserUpload(j.job_id);
     }finally{startUploadButton.disabled=false;}
 }
@@ -709,7 +711,7 @@ async function importSettings(file){if(!file)return;let text=await file.text();l
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}
 
-function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',132:'84H Legacy Write User',135:'87H Read User'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
+function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',131:'83H Set User Data',132:'84H Stop Waiting',135:'87H Get User Data'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
 function protocolDirectionLabel(d){return ({TX:'TX →',RX:'← RX',EVENT:'CARD/EVENT',INFO:'INFO'})[d]||d;}
 function protocolVisibleEntries(){const showPoll=window.protocolShowPoll&&protocolShowPoll.checked;const node=window.protocolNodeFilter?Number(protocolNodeFilter.value):0;return PROTOCOL_ENTRIES.filter(e=>(!node||e.node===node)&&(showPoll||e.command!==0x25||e.direction==='EVENT'));}
 function renderProtocolLive(){

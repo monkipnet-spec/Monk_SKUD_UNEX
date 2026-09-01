@@ -189,7 +189,9 @@ WebServer::Res WebServer::jsonUserReadJob(const ControllerUserReadJob&job){
 WebServer::Res WebServer::jsonEepromSearchJob(const ControllerEepromSearchJob&job){
     std::ostringstream o;
     o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\""
-     <<",\"card_series\":"<<job.card_series<<",\"card_number\":"<<job.card_number
+     <<",\"card_series\":"<<job.card_series<<",\"card_number\":"<<job.card_number<<",\"compact_user_addresses\":[";
+    bool first_addr=true;for(int a:job.compact_user_addresses){if(!first_addr)o<<',';first_addr=false;o<<a;}o<<"]";
+    o<<",\"compact_probes\":[";bool first_probe=true;for(const auto&n:job.compact_probes){if(!first_probe)o<<',';first_probe=false;o<<"\""<<util::jsonEscape(n)<<"\"";}o<<"]"
      <<",\"start_address\":"<<job.start_address<<",\"end_address\":"<<job.end_address<<",\"block_size\":"<<job.block_size
      <<",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"failed\":"<<job.failed<<",\"truncated\":"<<(job.truncated?"true":"false")<<",\"matches\":[";
     bool first=true;for(const auto&m:job.matches){if(!first)o<<',';first=false;o<<"{\"controller_node\":"<<m.controller_node<<",\"eeprom_address\":"<<m.eeprom_address<<",\"pattern\":\""<<util::jsonEscape(m.pattern)<<"\",\"exact\":"<<(m.exact?"true":"false")<<",\"matched_hex\":\""<<util::jsonEscape(m.matched_hex)<<"\",\"context_hex\":\""<<util::jsonEscape(m.context_hex)<<"\"}";}o<<"],\"errors\":[";
@@ -272,7 +274,9 @@ WebServer::Res WebServer::route(const Req&r){
         std::vector<int> selected_nodes;auto allc=controllers_.controllers();
         if(f["all_controllers"]=="1"){for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);}else{for(int node:parseIntList(f["controller_nodes"])){auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});if(it!=allc.end())selected_nodes.push_back(node);}}
         if(selected_nodes.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
-        auto id=controllers_.queueEepromSearch(series,number,std::move(selected_nodes),start,end,block);
+        auto compact_addresses=parseIntList(f["compact_addresses"]);
+        for(int a:compact_addresses)if(a<1||a>16383)return{400,"application/json","{\"ok\":false,\"error\":\"compact user addresses must be 1..16383\"}"};
+        auto id=controllers_.queueEepromSearch(series,number,std::move(selected_nodes),start,end,block,std::move(compact_addresses));
         std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<"}";return{200,"application/json",o.str()};
     }
     if(r.path=="/api/controllers/eeprom-search/status"&&r.method=="GET"){

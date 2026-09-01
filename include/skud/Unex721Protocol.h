@@ -39,9 +39,10 @@ public:
         std::uint32_t pin{};
         std::uint8_t mode{};
         std::string access_mode;
-        bool card_known{true}; // false for real compact H/UNEX 8-byte records: captured bytes are not direct series:number
-        bool details_known{true}; // false when PIN/mode layout is not confirmed
+        bool card_known{true}; // official H-series 87H 8-byte record exposes Site/Card directly
+        bool details_known{true}; // true for official H-series 87H mode 0..3
         std::string raw_record_hex;
+        std::vector<std::uint8_t> raw_record;
         std::string message;
     };
 
