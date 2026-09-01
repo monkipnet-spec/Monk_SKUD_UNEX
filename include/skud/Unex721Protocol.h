@@ -22,6 +22,13 @@ public:
         std::string raw_frame_hex;
         std::string message;
     };
+    struct EepromWriteOutcome {
+        bool ok{false};
+        int address{};
+        int length{};
+        std::string raw_frame_hex;
+        std::string message;
+    };
     struct UserReadOutcome {
         bool ok{false};
         bool present{false};
@@ -44,7 +51,8 @@ public:
     static std::vector<std::uint8_t> frame(std::uint8_t node,std::uint8_t command,const std::vector<std::uint8_t>&data={});
     static bool validFrame(const std::vector<std::uint8_t>&f);
 
-    // SOYAL H-series Extended Protocol used by AR-727H and documented for RS485.
+    // Legacy/Enterprise extended transport retained only as a compatibility fallback.
+    // The real UNEX 721 H-series path is the standard 0x7E protocol.
     static std::vector<std::uint8_t> extendedFrame(std::uint8_t node,std::uint8_t command,const std::vector<std::uint8_t>&data={});
     static bool validExtendedFrame(const std::vector<std::uint8_t>&f);
 
@@ -59,6 +67,7 @@ public:
     UserWriteOutcome deleteUser(std::uint8_t node,const User& user);
     UserReadOutcome readUser(std::uint8_t node,int address);
     EepromReadOutcome readEeprom(std::uint8_t node,int address,int length);
+    EepromWriteOutcome writeEeprom(std::uint8_t node,int address,const std::vector<std::uint8_t>& data);
 
 private:
     std::optional<std::vector<std::uint8_t>> transact(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data,int timeout_ms=120);

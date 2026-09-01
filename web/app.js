@@ -31,6 +31,11 @@ function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('h
 
 function formatUptime(total){total=Math.max(0,Math.floor(Number(total)||0));const d=Math.floor(total/86400);total%=86400;const h=Math.floor(total/3600);total%=3600;const m=Math.floor(total/60);const sec=total%60;const clock=[h,m,sec].map(x=>String(x).padStart(2,'0')).join(':');return d>0?d+'д '+clock:clock;}
 async function refreshStatus(){let r=await api('/api/status');let s=await r.json();if(window.presentCount)presentCount.textContent=s.present_count||0;if(window.registeredCount)registeredCount.textContent=s.registered_count||0;if(window.cpuLoad)cpuLoad.textContent=Number(s.cpu_percent||0).toFixed(1)+'%';if(window.ramLoad)ramLoad.textContent=Number(s.ram_percent||0).toFixed(1)+'%';if(window.ramDetail)ramDetail.textContent=(s.ram_used_mb||0)+' / '+(s.ram_total_mb||0)+' MB';if(window.uptimeValue)uptimeValue.textContent=formatUptime(s.uptime_seconds);}
+function refreshHeaderClock(){
+    const now=new Date();
+    if(window.headerClockTime)headerClockTime.textContent=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
+    if(window.headerClockDate){const weekday=new Intl.DateTimeFormat('ru-RU',{weekday:'long'}).format(now);const date=new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}).format(now);headerClockDate.textContent=date+' · '+weekday;}
+}
 function timeOnly(value){if(!value)return '—';const s=String(value);return s.length>=19?s.slice(11,19):s;}
 async function loadTodayAttendance(){
     let a=await (await api('/api/attendance/today')).json();
@@ -340,7 +345,7 @@ async function startUserUpload(){
         const r=await api('/api/controllers/upload-users',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({all_users:uploadAllUsers.checked?'1':'0',user_ids:userIds.join(','),all_controllers:uploadAllControllers.checked?'1':'0',controller_nodes:nodes.join(',')})});
         const j=await r.json();
         if(!r.ok||!j.ok){uploadResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось создать задание')+'</div>';return;}
-        if(!j.protocol_ready)uploadResult.innerHTML='<div class="protocol-warning"><b>Аппаратная запись недоступна.</b><br>'+esc(j.protocol_message||'Протокол записи не готов')+'</div>';else uploadResult.innerHTML='<div class="upload-job-state"><b>SOYAL Extended Protocol активен.</b><br>'+esc(j.protocol_message||'')+'</div>';
+        if(!j.protocol_ready)uploadResult.innerHTML='<div class="protocol-warning"><b>Аппаратная запись недоступна.</b><br>'+esc(j.protocol_message||'Протокол записи не готов')+'</div>';else uploadResult.innerHTML='<div class="upload-job-state"><b>SOYAL H-series 0x7E активен.</b><br>'+esc(j.protocol_message||'')+'</div>';
         await pollUserUpload(j.job_id);
     }finally{startUploadButton.disabled=false;}
 }
@@ -704,7 +709,7 @@ async function importSettings(file){if(!file)return;let text=await file.text();l
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}
 
-function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',132:'84H Write User',135:'87H Read User'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
+function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',132:'84H Legacy Write User',135:'87H Read User'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
 function protocolDirectionLabel(d){return ({TX:'TX →',RX:'← RX',EVENT:'CARD/EVENT',INFO:'INFO'})[d]||d;}
 function protocolVisibleEntries(){const showPoll=window.protocolShowPoll&&protocolShowPoll.checked;const node=window.protocolNodeFilter?Number(protocolNodeFilter.value):0;return PROTOCOL_ENTRIES.filter(e=>(!node||e.node===node)&&(showPoll||e.command!==0x25||e.direction==='EVENT'));}
 function renderProtocolLive(){
@@ -732,4 +737,4 @@ async function clearProtocolLive(){await api('/api/protocol/live/clear',{method:
 async function logout(){await api('/api/logout');location='/login.html'}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function attr(s){return esc(s)}function js(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
 
-refreshStatus();loadTodayAttendance();loadUsers();loadDepartments(false);setInterval(refreshStatus,3000);setInterval(loadTodayAttendance,5000);
+refreshHeaderClock();refreshStatus();loadTodayAttendance();loadUsers();loadDepartments(false);setInterval(refreshHeaderClock,1000);setInterval(refreshStatus,3000);setInterval(loadTodayAttendance,5000);

@@ -152,3 +152,12 @@ v0.3.7
 - COMPILE VERIFIED: users, departments, controllers, attendance events/state/activity and controller-card catalog have MariaDB backends
 - MIGRATION SAFETY: legacy runtime CSV is merged, read-back verified, backed up, then removed; RuntimeBootstrap does not recreate migrated CSV files
 - NOTE: real MariaDB server migration must be verified on the target Ubuntu host because the build container has Connector/C but no MariaDB server daemon
+
+v0.3.8
+- PASS: clean Release build ([100%] Built target monk-skud-unex)
+- PASS: node --check web/app.js
+- PASS: embedded Web contains centered headerClockTime/headerClockDate and cache revision v=038
+- PASS: header presence text contains no trailing «зарегистрированных»; present and total counters use equal 25px number size, total is red
+- PASS: H-series 20H frame test exactly matches SOYAL documented sample: 7E 08 01 20 00 16 01 20 E9 41
+- PASS: pseudo-TTY 20H ACK + automatic 12H read-back verifies written byte and returns ok
+- SAFETY: legacy Extended 0x84 user write is removed from executable path; user-level write remains blocked until H-series user EEPROM addresses/layout are confirmed on hardware
