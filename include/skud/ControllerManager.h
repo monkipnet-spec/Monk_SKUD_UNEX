@@ -35,7 +35,7 @@ public:
     void clearControllerCards();
 
     // User uploads are queued so the web thread never touches the serial port.
-    std::uint64_t queueUserUpload(std::vector<User> users,std::vector<int> controller_nodes);
+    std::uint64_t queueUserUpload(std::vector<User> users,std::vector<int> controller_nodes,bool full_sync=false);
     std::optional<ControllerUserUploadJob> userUploadJob(std::uint64_t id) const;
     bool userUploadProtocolReady() const;
     std::string userUploadProtocolMessage() const;
@@ -65,6 +65,7 @@ private:
         std::uint64_t id{};
         std::vector<User> users;
         std::vector<int> controller_nodes;
+        bool full_sync{false};
     };
     struct PendingUserDelete {
         std::uint64_t id{};

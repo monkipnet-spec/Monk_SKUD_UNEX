@@ -230,6 +230,19 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,c
     return{true,"written_verified",m.str()};
 }
 
+Unex721Protocol::UserWriteOutcome Unex721Protocol::clearAllUsers(std::uint8_t node){
+    // AR-721H/727H Protocol v1.2, command 85H: Clearing All Card Content.
+    // The manual notes that processing can take about 10 seconds, so use a
+    // deliberately long timeout. This command is used only for an explicit
+    // full synchronization requested by the operator.
+    auto ack=transact(node,0x85,{},12000);
+    if(!ack)return{false,"clear_timeout","Нет ответа на 85H Clear All Users (ожидание 12 с)"};
+    if(ack->size()<6)return{false,"clear_error","Короткий ответ на 85H: "+util::hex(*ack)};
+    if((*ack)[3]==NACK)return{false,"clear_nack","Контроллер вернул NACK на 85H: "+util::hex(*ack)};
+    if((*ack)[3]!=ACK)return{false,"clear_error","Неожиданный ответ 85H: "+util::hex(*ack)};
+    return{true,"cleared_all","Все пользовательские ячейки очищены командой 85H; далее будут записаны только пользователи полной выгрузки"};
+}
+
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
     const int address=user.controller_port;
     if(address<=0||address>1023)

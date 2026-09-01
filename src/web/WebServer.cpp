@@ -122,7 +122,7 @@ WebServer::Res WebServer::jsonTodayAttendance(){
 }
 WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonUserUploadJob(const ControllerUserUploadJob&job){
-    std::ostringstream o;o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"success\":"<<job.success<<",\"failed\":"<<job.failed<<",\"skipped\":"<<job.skipped<<",\"results\":[";
+    std::ostringstream o;o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"success\":"<<job.success<<",\"failed\":"<<job.failed<<",\"skipped\":"<<job.skipped<<",\"full_sync\":"<<(job.full_sync?"true":"false")<<",\"results\":[";
     bool first=true;for(const auto&r:job.results){if(!first)o<<',';first=false;o<<"{\"user_id\":"<<r.user_id<<",\"controller_node\":"<<r.controller_node<<",\"status\":\""<<util::jsonEscape(r.status)<<"\",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";}o<<"]}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
@@ -346,12 +346,34 @@ WebServer::Res WebServer::route(const Req&r){
         auto f=util::parseForm(r.body);std::vector<User> selected_users;std::vector<int> selected_nodes;
         const auto all_users=f["all_users"]=="1";const auto all_controllers=f["all_controllers"]=="1";
         auto allu=users_.list();
-        if(all_users)selected_users=allu;else{auto ids=parseIntList(f["user_ids"]);for(int id:ids){auto u=users_.byId(id);if(u)selected_users.push_back(*u);}}
+        if(all_users){
+            // Full synchronization rebuilds the controller from active local users only.
+            // Disabled local users intentionally stay absent after 85H clear.
+            for(const auto&u:allu)if(u.enabled)selected_users.push_back(u);
+
+            // Because 85H is destructive, refuse to clear a controller unless the
+            // local dataset is internally safe to rebuild: every active user must
+            // have a valid H-series address/card and addresses must be unique.
+            std::map<int,int> address_owner;
+            for(const auto&u:selected_users){
+                const std::string card=!u.card.empty()?u.card:(!u.cards.empty()?u.cards.front():std::string{});
+                if(u.controller_port<1||u.controller_port>1023){
+                    return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: active user "+std::to_string(u.id)+" has controller address outside 1..1023\"}"};
+                }
+                if(card.empty()){
+                    return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: active user "+std::to_string(u.id)+" has no card\"}"};
+                }
+                auto [it,inserted]=address_owner.emplace(u.controller_port,u.id);
+                if(!inserted){
+                    return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: duplicate controller address "+std::to_string(u.controller_port)+" for users "+std::to_string(it->second)+" and "+std::to_string(u.id)+"\"}"};
+                }
+            }
+        }else{auto ids=parseIntList(f["user_ids"]);for(int id:ids){auto u=users_.byId(id);if(u)selected_users.push_back(*u);}}
         auto allc=controllers_.controllers();
         if(all_controllers){for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);}else{auto nodes=parseIntList(f["controller_nodes"]);for(int node:nodes){auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});if(it!=allc.end())selected_nodes.push_back(node);}}
         if(selected_users.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no users selected\"}"};
         if(selected_nodes.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
-        auto id=controllers_.queueUserUpload(std::move(selected_users),std::move(selected_nodes));
+        auto id=controllers_.queueUserUpload(std::move(selected_users),std::move(selected_nodes),all_users);
         std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"protocol_ready\":"<<(controllers_.userUploadProtocolReady()?"true":"false")<<",\"protocol_message\":\""<<util::jsonEscape(controllers_.userUploadProtocolMessage())<<"\"}";
         return{200,"application/json",o.str()};
     }

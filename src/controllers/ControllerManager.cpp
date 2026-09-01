@@ -173,15 +173,15 @@ void ControllerManager::finishBlockedUserUpload(ControllerUserUploadJob&job,cons
     }
 }
 
-std::uint64_t ControllerManager::queueUserUpload(std::vector<User>users,std::vector<int>controller_nodes){
+std::uint64_t ControllerManager::queueUserUpload(std::vector<User>users,std::vector<int>controller_nodes,bool full_sync){
     std::lock_guard lk(upload_mu_);
     const auto id=next_upload_id_++;
-    ControllerUserUploadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";
-    job.total=static_cast<int>(users.size()*controller_nodes.size());
+    ControllerUserUploadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.full_sync=full_sync;
+    job.total=static_cast<int>(users.size()*controller_nodes.size()+(full_sync?controller_nodes.size():0));
     if(!Unex721Protocol::userWriteSupported()){
         finishBlockedUserUpload(job,users,controller_nodes);
     }else{
-        upload_queue_.push_back(PendingUserUpload{id,std::move(users),std::move(controller_nodes)});
+        upload_queue_.push_back(PendingUserUpload{id,std::move(users),std::move(controller_nodes),full_sync});
     }
     upload_jobs_[id]=std::move(job);
     while(upload_jobs_.size()>20)upload_jobs_.erase(upload_jobs_.begin());
@@ -468,15 +468,43 @@ void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
         pending=std::move(upload_queue_.front());upload_queue_.pop_front();
         auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="running";
     }
-    for(const auto&u:pending.users){
+    auto append_result=[this,&pending](ControllerUserUploadResult r,bool ok,bool skipped=false){
+        std::lock_guard lk(upload_mu_);
+        auto it=upload_jobs_.find(pending.id);if(it==upload_jobs_.end())return;
+        auto&job=it->second;++job.completed;
+        if(ok)++job.success;else if(skipped)++job.skipped;else ++job.failed;
+        job.results.push_back(std::move(r));
+    };
+
+    if(pending.full_sync){
+        // Full synchronization is intentionally controller-centric: clear one
+        // controller first, then immediately rebuild it from the selected local
+        // user set before moving to the next controller.  This guarantees that
+        // stale/duplicate slots (for example an old card at address 1023) cannot
+        // survive a successful full sync.
         for(int node:pending.controller_nodes){
             if(!running_)return;
-            auto out=proto.writeUser(static_cast<std::uint8_t>(node),u);
-            ControllerUserUploadResult r{u.id,node,out.status,out.message};
-            std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it==upload_jobs_.end())continue;
-            auto&job=it->second;++job.completed;
-            if(out.ok)++job.success;else if(out.status=="skipped")++job.skipped;else ++job.failed;
-            job.results.push_back(std::move(r));
+            auto clear=proto.clearAllUsers(static_cast<std::uint8_t>(node));
+            append_result(ControllerUserUploadResult{0,node,clear.status,clear.message},clear.ok);
+            if(!clear.ok){
+                for(const auto&u:pending.users){
+                    append_result(ControllerUserUploadResult{u.id,node,"skipped_clear_failed","83H не отправлен: полная очистка 85H этого контроллера не подтверждена"},false,true);
+                }
+                continue;
+            }
+            for(const auto&u:pending.users){
+                if(!running_)return;
+                auto out=proto.writeUser(static_cast<std::uint8_t>(node),u);
+                append_result(ControllerUserUploadResult{u.id,node,out.status,out.message},out.ok,out.status=="skipped");
+            }
+        }
+    }else{
+        for(const auto&u:pending.users){
+            for(int node:pending.controller_nodes){
+                if(!running_)return;
+                auto out=proto.writeUser(static_cast<std::uint8_t>(node),u);
+                append_result(ControllerUserUploadResult{u.id,node,out.status,out.message},out.ok,out.status=="skipped");
+            }
         }
     }
     std::lock_guard lk(upload_mu_);auto it=upload_jobs_.find(pending.id);if(it!=upload_jobs_.end())it->second.state="completed";

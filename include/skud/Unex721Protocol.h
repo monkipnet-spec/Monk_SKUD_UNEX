@@ -65,6 +65,7 @@ public:
     static bool userWriteSupported();
     static std::string userWriteSupportMessage();
     UserWriteOutcome writeUser(std::uint8_t node,const User& user);
+    UserWriteOutcome clearAllUsers(std::uint8_t node);
     UserWriteOutcome deleteUser(std::uint8_t node,const User& user);
     UserReadOutcome readUser(std::uint8_t node,int address);
     EepromReadOutcome readEeprom(std::uint8_t node,int address,int length);

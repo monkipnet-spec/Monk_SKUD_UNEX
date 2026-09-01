@@ -105,6 +105,7 @@ struct ControllerUserUploadJob {
     int success{};
     int failed{};
     int skipped{};
+    bool full_sync{false};
     std::vector<ControllerUserUploadResult> results;
 };
 

@@ -337,21 +337,21 @@ function toggleUploadSelection(kind){
 function selectedUploadValues(selector){return [...document.querySelectorAll(selector+':checked')].map(x=>Number(x.value)).filter(Boolean);}
 function updateUploadSummary(){
     if(!window.uploadSelectionSummary)return;
-    const userCount=uploadAllUsers.checked?USERS.length:selectedUploadValues('.upload-user').length;
+    const userCount=uploadAllUsers.checked?USERS.filter(u=>u.enabled!==false).length:selectedUploadValues('.upload-user').length;
     const controllerCount=uploadAllControllers.checked?CONTROLLERS.length:selectedUploadValues('.upload-controller').length;
-    uploadSelectionSummary.textContent=`Будет подготовлено записей: ${userCount} × ${controllerCount} = ${userCount*controllerCount}`;
+    uploadSelectionSummary.textContent=uploadAllUsers.checked?`Полная синхронизация: сначала очистка ${controllerCount} контроллер(ов), затем запись ${userCount} × ${controllerCount} = ${userCount*controllerCount} пользователей.`:`Будет подготовлено записей: ${userCount} × ${controllerCount} = ${userCount*controllerCount}`;
 }
 document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.upload-user,.upload-controller'))updateUploadSummary();});
 
-function uploadStatusText(status){return ({ok:'Записан и проверен',ok_unverified:'Записан — проверить картой',skipped:'Пропущен',blocked_protocol:'Заблокировано',error:'Ошибка'})[status]||status;}
+function uploadStatusText(status){return ({ok:'Записан и проверен',written_verified:'Записан и проверен',cleared_all:'Все ячейки очищены',skipped_clear_failed:'Пропущен: очистка не подтверждена',ok_unverified:'Записан — проверить картой',skipped:'Пропущен',blocked_protocol:'Заблокировано',error:'Ошибка'})[status]||status;}
 function renderUserUploadJob(job){
     const state=({queued:'В очереди',running:'Выполняется',completed:'Завершено',blocked:'Аппаратная запись заблокирована'})[job.state]||job.state;
-    const rows=(job.results||[]).map(r=>{const u=USERS.find(x=>x.id===r.user_id);const c=CONTROLLERS.find(x=>x.node===r.controller_node);const cls=(r.status==='ok'||r.status==='ok_unverified')?'ok':r.status==='skipped'?'muted':'bad';return `<tr><td>${r.user_id} — ${esc(u?userDisplayName(u):'')}</td><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td class="${cls}">${esc(uploadStatusText(r.status))}</td><td>${esc(r.message||'')}</td></tr>`;}).join('');
+    const rows=(job.results||[]).map(r=>{const u=USERS.find(x=>x.id===r.user_id);const c=CONTROLLERS.find(x=>x.node===r.controller_node);const good=['ok','written_verified','cleared_all','ok_unverified'].includes(r.status);const muted=['skipped','skipped_clear_failed'].includes(r.status);const cls=good?'ok':muted?'muted':'bad';const who=r.user_id===0?'Очистка всех ячеек':`${r.user_id} — ${esc(u?userDisplayName(u):'')}`;return `<tr><td>${who}</td><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td class="${cls}">${esc(uploadStatusText(r.status))}</td><td>${esc(r.message||'')}</td></tr>`;}).join('');
     uploadResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · успешно ${job.success} · пропущено ${job.skipped} · ошибок/блокировок ${job.failed}</div>${rows?`<div class="upload-result-table"><table><thead><tr><th>Пользователь</th><th>Контроллер</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
 }
 
 async function pollUserUpload(jobId){
-    for(let n=0;n<120;n++){
+    for(let n=0;n<900;n++){
         const r=await api('/api/controllers/upload-users/status?job_id='+encodeURIComponent(jobId));
         if(!r.ok)return;
         const job=await r.json();renderUserUploadJob(job);
@@ -364,9 +364,11 @@ async function startUserUpload(){
     const userIds=selectedUploadValues('.upload-user');const nodes=selectedUploadValues('.upload-controller');
     if(!uploadAllUsers.checked&&!userIds.length)return alert('Выберите хотя бы одного пользователя');
     if(!uploadAllControllers.checked&&!nodes.length)return alert('Выберите хотя бы один контроллер');
-    if(uploadAllUsers.checked&&!USERS.length)return alert('Нет пользователей для выгрузки');
+    if(uploadAllUsers.checked&&!USERS.some(u=>u.enabled!==false))return alert('Нет активных пользователей для полной выгрузки');
     if(uploadAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
-    if(!confirm(`Выгрузить ${uploadAllUsers.checked?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?\n\nИспользуется официальный H-series 83H Set User Data. Успех засчитывается только после контрольного 87H и точного совпадения 8 байт.`))return;
+    const fullSync=uploadAllUsers.checked;
+    const warning=fullSync?'\n\nВНИМАНИЕ: ПОЛНАЯ ВЫГРУЗКА сначала очистит ВСЕ пользовательские ячейки выбранных контроллеров командой 85H. После очистки будут записаны только пользователи из Monk SKUD. Старые и дублирующиеся карты будут удалены.':'';
+    if(!confirm(`Выгрузить ${fullSync?'всех':'выбранных'} пользователей в ${uploadAllControllers.checked?'все':'выбранные'} контроллеры?${warning}\n\nЗапись выполняется 83H, каждая запись проверяется контрольным 87H.`))return;
     startUploadButton.disabled=true;uploadResult.innerHTML='<div class="muted">Создание задания...</div>';
     try{
         const r=await api('/api/controllers/upload-users',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({all_users:uploadAllUsers.checked?'1':'0',user_ids:userIds.join(','),all_controllers:uploadAllControllers.checked?'1':'0',controller_nodes:nodes.join(',')})});
