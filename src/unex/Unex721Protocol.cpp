@@ -231,16 +231,53 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,c
 }
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
-    (void)node;
-    (void)user;
-    return{false,"blocked_protocol","Удаление из контроллера пока заблокировано отдельно: для выгрузки уже используется официальный 83H, но безопасная семантика очистки одного user slot будет включена после аппаратной проверки записи."};
+    const int address=user.controller_port;
+    if(address<=0||address>1023)
+        return{false,"skipped","Для AR-721H/727H допустимый User Address 1..1023"};
+
+    // Official 83H defines Mode=00 as Invalid.  Disable the slot with the
+    // smallest possible change: preserve Site/Card/PIN/Zone and change only
+    // Access Mode to 00.  This is reversible and avoids 85H (clear all users).
+    auto before=readUser(node,address);
+    if(!before.ok)
+        return{false,"precheck_failed","Удаление не выполнено: 87H до записи не удался: "+before.message};
+    if(before.raw_record.size()!=8)
+        return{false,"unsupported_record","Удаление требует официальную H-series 8B запись 87H; получено: "+before.raw_record_hex};
+    if(before.raw_record[6]==0)
+        return{true,"already_invalid","User Address "+std::to_string(address)+" уже имеет Mode=0 (Invalid), RAW="+before.raw_record_hex};
+
+    auto expected=before.raw_record;
+    expected[6]=0x00;
+    const auto a=static_cast<std::uint16_t>(address);
+    std::vector<std::uint8_t> payload={
+        static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF)
+    };
+    payload.insert(payload.end(),expected.begin(),expected.end());
+
+    auto ack=transact(node,0x83,payload,500);
+    if(!ack)return{false,"delete_timeout","Нет ответа на 83H при отключении User Address "+std::to_string(address)};
+    if(ack->size()<6)return{false,"delete_error","Короткий ответ на 83H: "+util::hex(*ack)};
+    if((*ack)[3]==NACK)return{false,"delete_nack","Контроллер вернул NACK на 83H: "+util::hex(*ack)};
+    if((*ack)[3]!=ACK)return{false,"delete_error","Неожиданный ответ 83H: "+util::hex(*ack)};
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    auto after=readUser(node,address);
+    if(!after.ok||after.raw_record.size()!=8)
+        return{false,"verify_failed","83H ACK получен, но контрольный 87H после отключения не удался"};
+    if(after.raw_record!=expected)
+        return{false,"verify_failed","83H ACK получен, но Mode=0 не подтверждён. Ожидалось RAW="+bytesHex(expected)+", получено="+after.raw_record_hex};
+
+    std::ostringstream m;
+    m<<"User Address "<<address<<" отключён и подтверждён 87H (Mode=0 Invalid): карта "
+     <<util::formatCardId(before.uid1,before.uid2)<<", RAW="<<after.raw_record_hex;
+    return{true,"invalidated_verified",m.str()};
 }
 
 Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int address){
     UserReadOutcome out;
     out.address=address;
-    if(address<=0||address>16383){
-        out.message="Адрес пользователя должен быть 1..16383";
+    if(address<=0||address>1023){
+        out.message="Адрес пользователя должен быть 1..1023 для AR-721H/727H";
         return out;
     }
     const auto a=static_cast<std::uint16_t>(address);
@@ -447,8 +484,15 @@ RawUnexEvent Unex721Protocol::decodeEvent(std::uint8_t node,const std::vector<st
     // Hence card series is bytes 19..20 and card number is bytes 23..24
     // (zero-based frame indexes). This mapping is now confirmed by a real
     // successful green-light access event, not inferred from 87H user data.
-    if(f.size()>=31 && f[0]==0x7E && f[3]==0x0B){
-        e.event_code=0x0B;
+    if(f.size()>=31 && f[0]==0x7E && (f[3]==0x0B || f[3]==0x03)){
+        // Protocol v1.2, 25H event packet:
+        // frame[3]  = event (0Bh valid / 03h invalid)
+        // frame[13] = Data8  = User Address Hi
+        // frame[14] = Data9  = User Address Lo
+        // frame[19..20]      = Site Code
+        // frame[23..24]      = Card Code
+        e.event_code=f[3];
+        e.user_address=(static_cast<int>(f[13])<<8)|f[14];
         const std::uint16_t series=(static_cast<std::uint16_t>(f[19])<<8)|f[20];
         const std::uint16_t number=(static_cast<std::uint16_t>(f[23])<<8)|f[24];
         if(!(series==0&&number==0) && !(series==0xFFFF&&number==0xFFFF))

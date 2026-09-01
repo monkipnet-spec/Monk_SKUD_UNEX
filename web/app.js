@@ -207,7 +207,7 @@ function updateReadMode(){
 }
 
 function selectedReadControllers(){return [...document.querySelectorAll('.read-controller:checked')].map(x=>Number(x.value)).filter(Boolean);}
-function localReadAddresses(){return [...new Set(USERS.map(u=>Number(u.controller_port)||0).filter(x=>x>=1&&x<=16383))].sort((a,b)=>a-b);}
+function localReadAddresses(){return [...new Set(USERS.map(u=>Number(u.controller_port)||0).filter(x=>x>=1&&x<=1023))].sort((a,b)=>a-b);}
 
 function updateReadSummary(){
     if(!window.readSelectionSummary)return;
@@ -219,7 +219,7 @@ function updateReadSummary(){
         extra=a.length?`Адреса: ${a.join(', ')}`:'У пользователей не заданы адреса в контроллере.';
     }else{
         const from=Number(readRangeFrom.value)||0,to=Number(readRangeTo.value)||0;
-        if(from>=1&&to>=from&&to<=16383)addressCount=to-from+1;
+        if(from>=1&&to>=from&&to<=1023)addressCount=to-from+1;
         extra=addressCount>1000?'Большой диапазон может читаться несколько минут и более.':'Диапазон читается последовательно командой 0x87.';
     }
     readSelectionSummary.innerHTML=`Будет прочитано: <b>${addressCount}</b> адрес(ов) × <b>${controllerCount}</b> контроллер(ов) = <b>${addressCount*controllerCount}</b> операций.<br><small>${esc(extra)}</small>`;
@@ -241,9 +241,34 @@ function renderUserReadJob(job){
             ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${detailLine}</small>`
             :'—';
         const local=r.local_user_id?`${r.local_user_id} — ${esc(r.local_user_name||'')}`:'—';
-        return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td></tr>`;
+        const action=(r.controller_enabled&&r.address>=1&&r.address<=1023)
+            ?`<button class="mini danger" onclick="invalidateControllerSlot(${r.controller_node},${r.address})">Отключить слот</button>`
+            :'—';
+        return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td><td>${action}</td></tr>`;
     }).join('');
-    readResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · совпало ${job.matches} · отличается ${job.differences} · нет в контроллере ${job.missing} · неизвестных ${job.unknown} · не проверено ${job.unverified||0} · пустых ${job.empty} · ошибок ${job.failed}</div>${rows?`<div class="upload-result-table read-result-table"><table><thead><tr><th>Контроллер</th><th>Адрес</th><th>Данные контроллера</th><th>Пользователь в системе</th><th>Сравнение</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+    readResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · совпало ${job.matches} · отличается ${job.differences} · нет в контроллере ${job.missing} · неизвестных ${job.unknown} · не проверено ${job.unverified||0} · пустых ${job.empty} · ошибок ${job.failed}</div>${rows?`<div class="upload-result-table read-result-table"><table><thead><tr><th>Контроллер</th><th>Адрес</th><th>Данные контроллера</th><th>Пользователь в системе</th><th>Сравнение</th><th>Действие</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+}
+
+async function invalidateControllerSlot(node,address){
+    if(!confirm(`Отключить User Address ${address} на контроллере Node ${node}?\n\nБудет отправлен официальный 83H с Mode=0 (Invalid), остальные Site/Card/PIN/Zone сохранятся. После ACK выполняется обязательный 87H read-back.`))return;
+    const r=await api('/api/controllers/invalidate-user-slot',{
+        method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:enc({controller_node:String(node),address:String(address)})
+    });
+    const j=await r.json();
+    if(!r.ok||!j.ok)return alert('Ошибка: '+(j.error||'не удалось создать задание'));
+    for(let n=0;n<180;n++){
+        const sr=await api('/api/users/delete-selected/status?job_id='+encodeURIComponent(j.job_id));
+        if(!sr.ok)break;
+        const job=await sr.json();
+        if(job.state!=='queued'&&job.state!=='running'){
+            const x=(job.results||[])[0];
+            alert(x?x.message:(job.success?'Слот отключён':'Операция завершилась с ошибкой'));
+            return;
+        }
+        await new Promise(resolve=>setTimeout(resolve,500));
+    }
+    alert('Не получен финальный статус отключения слота');
 }
 
 async function pollUserRead(jobId){
@@ -264,7 +289,7 @@ async function startUserRead(){
     let addressMode='local',from='',to='',addressCount=localReadAddresses().length;
     if(readModeRange.checked){
         addressMode='range';from=Number(readRangeFrom.value)||0;to=Number(readRangeTo.value)||0;
-        if(from<1||to>16383||from>to)return alert('Диапазон адресов должен быть в пределах 1..16383');
+        if(from<1||to>1023||from>to)return alert('Диапазон адресов AR-721H/727H должен быть в пределах 1..1023');
         addressCount=to-from+1;
     }else if(!addressCount)return alert('У пользователей в системе не задан ни один адрес в контроллере');
 

@@ -301,10 +301,10 @@ WebServer::Res WebServer::route(const Req&r){
         std::vector<int> addresses;
         const auto mode=f["address_mode"].empty()?"local":f["address_mode"];
         if(mode=="local"){
-            for(const auto&u:local_users)if(u.controller_port>0&&u.controller_port<=16383)addresses.push_back(u.controller_port);
+            for(const auto&u:local_users)if(u.controller_port>0&&u.controller_port<=1023)addresses.push_back(u.controller_port);
         }else if(mode=="range"){
             int from=0,to=0;try{from=std::stoi(f["range_from"]);to=std::stoi(f["range_to"]);}catch(...){}
-            if(from<1||to>16383||from>to)return{400,"application/json","{\"ok\":false,\"error\":\"range must be 1..16383\"}"};
+            if(from<1||to>1023||from>to)return{400,"application/json","{\"ok\":false,\"error\":\"range must be 1..1023 for AR-721H/727H\"}"};
             addresses.reserve(static_cast<std::size_t>(to-from+1));
             for(int a=from;a<=to;++a)addresses.push_back(a);
         }else{
@@ -325,6 +325,21 @@ WebServer::Res WebServer::route(const Req&r){
         auto job=controllers_.userReadJob(id);
         if(!job)return{404,"application/json","{\"error\":\"read job not found\"}"};
         return jsonUserReadJob(*job);
+    }
+
+    if(r.path=="/api/controllers/invalidate-user-slot"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);
+        int node=0,address=0;
+        try{node=std::stoi(f["controller_node"]);address=std::stoi(f["address"]);}catch(...){}
+        if(address<1||address>1023)return{400,"application/json","{\"ok\":false,\"error\":\"address must be 1..1023\"}"};
+        auto allc=controllers_.controllers();
+        auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+        if(it==allc.end())return{400,"application/json","{\"ok\":false,\"error\":\"controller not found or disabled\"}"};
+        User slot;slot.id=address;slot.controller_port=address;slot.enabled=false;
+        slot.last_name="Controller slot";slot.first_name=std::to_string(address);
+        auto id=controllers_.queueUserDelete({slot},{node},false);
+        std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"address\":"<<address<<",\"controller_node\":"<<node<<"}";
+        return{200,"application/json",o.str()};
     }
 
     if(r.path=="/api/controllers/upload-users"&&r.method=="POST"){
@@ -421,7 +436,7 @@ WebServer::Res WebServer::route(const Req&r){
         }
         if(u.access_mode!="card"&&u.access_mode!="card_or_pin"&&u.access_mode!="card_and_pin")u.access_mode="card";
         if((u.access_mode=="card_or_pin"||u.access_mode=="card_and_pin")&&u.pin_code.empty())return{400,"application/json","{\"ok\":false,\"error\":\"Для режима с PIN необходимо указать PIN пользователя\"}"};
-        try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>16383)u.controller_port=16383;
+        try{u.controller_port=std::stoi(f["controller_port"]);}catch(...){u.controller_port=0;}if(u.controller_port<0)u.controller_port=0;if(u.controller_port>1023)u.controller_port=1023;
         if(u.id>0){auto old=users_.byId(u.id);if(old){u.valid_from=old->valid_from;u.valid_until=old->valid_until;u.telegram_arrival=old->telegram_arrival;u.telegram_departure=old->telegram_departure;}}
         auto saved=users_.upsert(u);if(!saved.department.empty())departments_.add(saved.department);attendance_.refreshUserMetadata();return{200,"application/json","{\"ok\":true,\"id\":"+std::to_string(saved.id)+"}"};
     }

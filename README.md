@@ -1,3 +1,10 @@
+
+## v0.3.12 — stale controller slot cleanup
+- 25H valid/invalid event decoder now extracts the official User Address from Data8/Data9; real event `03 FF` is shown as User Address 1023.
+- Controller-user deletion now uses official H-series `83H Set User Data` with only Access Mode changed to `00` (Invalid), followed by mandatory `87H` byte-for-byte verification.
+- The controller readback table has an **Отключить слот** action, including slots that do not exist in the local database. This safely disables stale duplicate cards without using destructive `85H Empty all Users`.
+- H-series user read ranges are constrained to the documented 1..1023 address space.
+
 # Monk_SKUD_UNEX
 
 Модульная система контроля доступа на C++20 для Ubuntu Server 24.04/26.04 и контроллеров UNEX 721 через USB-COM/RS-485.

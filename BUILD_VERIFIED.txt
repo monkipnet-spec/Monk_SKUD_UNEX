@@ -1,8 +1,9 @@
-Monk_SKUD_UNEX v0.3.11
+Monk_SKUD_UNEX v0.3.12
 Release build: PASS
 web/app.js syntax: PASS
-Pseudo-COM protocol test: PASS
-Verified sequence: 87H pre-read -> 83H Set User Data -> ACK -> 87H exact 8-byte read-back.
-Verified negative case: ACK + unchanged 87H record => verify_failed (not success).
-Official protocol basis: AR-721H / AR-727H Communication Protocol v1.2, pages 35-36 and Memory Layout page 49.
-H-series upload User Address safety range: 1..1023.
+Official protocol basis: AR-721H / AR-727H Communication Protocol v1.2.
+Confirmed from real hardware log: 25H valid event for physical card 112:53910 contains Data8/Data9 = 03 FF, therefore User Address = 0x03FF = 1023.
+Event parser mapping test: PASS (event=0B, address=1023, site=112, card=53910).
+83H stale-slot invalidation: Mode byte is changed to 00 (Invalid), other 7 user bytes preserved, mandatory 87H exact read-back verification enabled.
+Destructive 85H Empty all Users is NOT used.
+H-series user address safety range: 1..1023.
