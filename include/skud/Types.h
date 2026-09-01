@@ -40,6 +40,8 @@ struct Controller {
     std::string last_raw_hex;
 };
 
+struct PersistedCardState { PresenceState state{PresenceState::Absent}; std::string last_read; };
+
 struct CardActivity {
     std::string card;
     int user_id{};

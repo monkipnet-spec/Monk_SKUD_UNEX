@@ -16,6 +16,7 @@ public:
     AttendanceEngine(UserManager& users, FileStore& store, int repeat_seconds);
     void setNotifier(NotifyFn fn);
     AttendanceEvent onCardRead(const std::string& card, int controller_node, const std::string& controller_name, const std::string& raw_hex="");
+    void recordRawControllerEvent(int controller_node,const std::string& controller_name,const std::string& raw_hex);
     std::vector<CardActivity> activities() const;
     std::vector<User> presentUsers() const;
     std::vector<DailyAttendance> todayAttendance() const;

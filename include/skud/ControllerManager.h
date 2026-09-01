@@ -6,12 +6,13 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
-namespace skud { class Config; class AttendanceEngine; class UserManager; class FileStore; class Unex721Protocol;
+namespace skud { class Config; class AttendanceEngine; class UserManager; class FileStore; class Unex721Protocol; class MariaDbUserStore;
 class ControllerManager {
 public:
     using RawEventFn = std::function<void(const RawUnexEvent&)>;
@@ -101,8 +102,13 @@ private:
     void rememberControllerCard(const std::string& card,int node,const std::string& controller_name,const std::string& raw_hex);
     bool loadControllerCards();
     bool saveControllerCards() const;
+    bool usingMariaDb() const;
+    bool backupAndRemove(const std::string& path,const std::string& label,std::string& error) const;
 
     Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
+    std::unique_ptr<MariaDbUserStore> db_;
+    mutable std::mutex storage_mu_;
+    mutable std::string storage_error_;
     mutable std::mutex mu_; std::vector<Controller> controllers_; std::string serial_status_{"OFFLINE"}; std::string serial_device_;
     std::atomic<bool> running_{false}; std::thread thread_; RawEventFn raw_cb_;
 

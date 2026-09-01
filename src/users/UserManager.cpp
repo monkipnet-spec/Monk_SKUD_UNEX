@@ -145,29 +145,32 @@ bool UserManager::load(){
 
     std::vector<User> csv_users;const bool csv_exists=readCsv(csv_users);
     if(csv_exists&&cfg_->getBool("database.migrate_users_csv",true)){
-        bool migrate=false;
-        if(db_users.empty()&&!csv_users.empty())migrate=true;
-        else if(!csv_users.empty()){
-            // Only remove an old CSV automatically when every CSV user/card is already represented in MariaDB.
-            migrate=std::all_of(csv_users.begin(),csv_users.end(),[&](const User& cu){
-                auto it=std::find_if(db_users.begin(),db_users.end(),[&](const User&du){return du.id==cu.id;});if(it==db_users.end())return false;
-                return std::all_of(cu.cards.begin(),cu.cards.end(),[&](const std::string&card){return userHasCard(*it,card);});
-            });
-        }else migrate=true;
-
-        if(db_users.empty()&&!csv_users.empty()){
-            if(!db_->save(csv_users,err)){std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB migration failed: "+err;return false;}
-            std::vector<User> verify;if(!db_->load(verify,err)||verify.size()!=csv_users.size()){
-                std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB verification failed: "+err;return false;
+        // v0.3.7 merges a leftover CSV into an already populated MariaDB instead
+        // of silently ignoring CSV-only users/cards. MariaDB metadata wins;
+        // empty DB fields are supplemented from CSV and missing cards are added.
+        for(auto cu:csv_users){
+            normalizeUser(cu);
+            auto it=std::find_if(db_users.begin(),db_users.end(),[&](const User&du){return du.id==cu.id;});
+            if(it==db_users.end()){
+                // Do not duplicate a physical card already owned by another DB user.
+                cu.cards.erase(std::remove_if(cu.cards.begin(),cu.cards.end(),[&](const std::string&card){return std::any_of(db_users.begin(),db_users.end(),[&](const User&du){return userHasCard(du,card);});}),cu.cards.end());
+                normalizeUser(cu);db_users.push_back(std::move(cu));
+            }else{
+                auto fill=[](std::string&dst,const std::string&src){if(dst.empty())dst=src;};
+                fill(it->last_name,cu.last_name);fill(it->first_name,cu.first_name);fill(it->middle_name,cu.middle_name);fill(it->department,cu.department);fill(it->position,cu.position);fill(it->pin_code,cu.pin_code);fill(it->valid_from,cu.valid_from);fill(it->valid_until,cu.valid_until);
+                if(it->controller_port<=0)it->controller_port=cu.controller_port;
+                for(const auto&card:cu.cards){const bool owned_elsewhere=std::any_of(db_users.begin(),db_users.end(),[&](const User&du){return du.id!=it->id&&userHasCard(du,card);});if(!owned_elsewhere)appendUniqueCard(it->cards,card);}
+                normalizeUser(*it);
             }
-            db_users=std::move(verify);migrate=true;
         }
-        if(migrate&&cfg_->getBool("database.remove_csv_after_migration",true)){
+        if(!db_->save(db_users,err)){std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB migration failed: "+err;return false;}
+        std::vector<User> verify;if(!db_->load(verify,err)||verify.size()!=db_users.size()){std::lock_guard sl(storage_mu_);storage_error_="CSV->MariaDB verification failed: "+err;return false;}db_users=std::move(verify);
+        if(cfg_->getBool("database.remove_csv_after_migration",true)){
             std::error_code ec;auto backup_dir=std::filesystem::path(path_).parent_path().parent_path()/"backup";std::filesystem::create_directories(backup_dir,ec);
             if(!ec&&std::filesystem::exists(path_)){
                 const auto now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());std::tm tm{};localtime_r(&now,&tm);std::ostringstream ts;ts<<std::put_time(&tm,"%Y%m%d-%H%M%S");
-                auto backup=backup_dir/("users.csv.pre-mariadb-"+ts.str());std::filesystem::copy_file(path_,backup,std::filesystem::copy_options::overwrite_existing,ec);
-                if(!ec)std::filesystem::remove(path_,ec);
+                auto backup=backup_dir/("users.csv.pre-mariadb-"+ts.str());std::filesystem::copy_file(path_,backup,std::filesystem::copy_options::overwrite_existing,ec);if(!ec)std::filesystem::remove(path_,ec);
+                if(ec){std::lock_guard sl(storage_mu_);storage_error_="users.csv backup/remove failed: "+ec.message();return false;}
             }
         }
     }

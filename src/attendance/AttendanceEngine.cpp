@@ -60,6 +60,9 @@ AttendanceEvent AttendanceEngine::onCardRead(const std::string&card,int node,con
     if(notify&&(e.type==AttendanceEventType::Arrival||e.type==AttendanceEventType::Departure))notify(e);
     return e;
 }
+void AttendanceEngine::recordRawControllerEvent(int node,const std::string&controller,const std::string&raw){
+    AttendanceEvent e;e.timestamp=util::nowLocal();e.type=AttendanceEventType::RawControllerEvent;e.controller_node=node;e.controller_name=controller;e.raw_hex=raw;store_.appendEvent(e);
+}
 void AttendanceEngine::persistLocked(){std::map<std::string,PersistedCardState> p;for(auto&[key,s]:states_)p[key]={s.presence,s.last_read_text};store_.saveCardStates(p);std::vector<CardActivity>a;for(auto&[_,x]:activities_)a.push_back(x);store_.saveActivities(a);}
 std::vector<CardActivity> AttendanceEngine::activities()const{std::lock_guard lk(mu_);std::vector<CardActivity>v;for(auto it=activities_.rbegin();it!=activities_.rend();++it)v.push_back(it->second);return v;}
 std::vector<User> AttendanceEngine::presentUsers()const{

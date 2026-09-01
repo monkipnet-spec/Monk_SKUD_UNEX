@@ -43,10 +43,11 @@ set_kv database.user "$DB_USER"
 set_kv database.password "$DB_PASS"
 set_kv database.auto_create true
 set_kv database.migrate_users_csv true
+set_kv database.migrate_runtime_csv true
 set_kv database.remove_csv_after_migration true
 chmod 600 "$CONF"
 if id monk >/dev/null 2>&1; then chown monk:monk "$CONF"; fi
 
 echo "MariaDB ready: $DB_NAME / $DB_USER"
 echo "Config updated: $CONF"
-echo "On the next daemon start users.csv will be migrated, verified, backed up, then removed from config/."
+echo "On the next daemon start users, departments, controllers, event journal and attendance state will be migrated, verified and backed up."

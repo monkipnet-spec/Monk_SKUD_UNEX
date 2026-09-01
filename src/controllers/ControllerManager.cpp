@@ -3,6 +3,7 @@
 #include "skud/Config.h"
 #include "skud/SerialPort.h"
 #include "skud/Unex721Protocol.h"
+#include "skud/MariaDbUserStore.h"
 #include "skud/UserManager.h"
 #include "skud/Util.h"
 #include <algorithm>
@@ -77,11 +78,30 @@ std::string hexSlice(const std::vector<std::uint8_t>& data,std::size_t begin,std
 ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){
     const auto root=std::filesystem::path(path_).parent_path().parent_path();
     controller_cards_path_=(root/"data"/"controller_cards.csv").string();
-    loadControllerCards();
+    if(usingMariaDb()){db_=std::make_unique<MariaDbUserStore>(cfg_);std::string err;if(!db_->init(err)){std::lock_guard lk(storage_mu_);storage_error_=err;}}
 }
 ControllerManager::~ControllerManager(){stop();}
-bool ControllerManager::loadControllers(){std::lock_guard lk(mu_);controllers_.clear();std::ifstream f(path_);if(!f)return false;std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()<4)continue;try{Controller x;x.node=std::stoi(c[0]);x.name=c[1];x.model=c[2];x.enabled=c[3]!="0";controllers_.push_back(x);}catch(...){}}return true;}
-bool ControllerManager::saveControllers()const{std::lock_guard lk(mu_);std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp);if(!f)return false;f<<"node;name;model;enabled\n";for(auto&x:controllers_)f<<x.node<<';'<<x.name<<';'<<x.model<<';'<<(x.enabled?1:0)<<"\n";f.close();std::error_code ec;std::filesystem::rename(tmp,path_,ec);if(ec){std::filesystem::remove(path_,ec);ec.clear();std::filesystem::rename(tmp,path_,ec);}return !ec;}
+bool ControllerManager::usingMariaDb()const{return cfg_.getBool("database.enabled",false);}
+bool ControllerManager::backupAndRemove(const std::string& file,const std::string& label,std::string& error)const{
+    if(!std::filesystem::exists(file))return true;std::error_code ec;auto backup=std::filesystem::path(file).parent_path().parent_path()/"backup";std::filesystem::create_directories(backup,ec);if(ec){error=ec.message();return false;}
+    const auto now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());std::tm tm{};localtime_r(&now,&tm);std::ostringstream ts;ts<<std::put_time(&tm,"%Y%m%d-%H%M%S");auto dst=backup/(label+".pre-mariadb-"+ts.str());std::filesystem::copy_file(file,dst,std::filesystem::copy_options::overwrite_existing,ec);if(ec){error=ec.message();return false;}std::filesystem::remove(file,ec);if(ec){error=ec.message();return false;}return true;
+}
+bool ControllerManager::loadControllers(){
+    auto readCsv=[&](std::vector<Controller>&out){std::ifstream f(path_);if(!f)return false;std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()<4)continue;try{Controller x;x.node=std::stoi(c[0]);x.name=c[1];x.model=c[2];x.enabled=c[3]!="0";out.push_back(std::move(x));}catch(...){}}return true;};
+    if(!usingMariaDb()){std::vector<Controller> tmp;if(!readCsv(tmp))return false;{std::lock_guard lk(mu_);controllers_=std::move(tmp);}loadControllerCards();return true;}
+    if(!db_){std::lock_guard lk(storage_mu_);storage_error_="MariaDB backend is not initialized";return false;}std::string err;std::vector<Controller> db_rows;if(!db_->loadControllers(db_rows,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}
+    std::vector<Controller> csv_rows;const bool csv_exists=readCsv(csv_rows);if(csv_exists&&cfg_.getBool("database.migrate_runtime_csv",true)){
+        for(const auto&c:csv_rows){auto it=std::find_if(db_rows.begin(),db_rows.end(),[&](const Controller&d){return d.node==c.node;});if(it==db_rows.end())db_rows.push_back(c);}
+        if(!db_->saveControllers(db_rows,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}std::vector<Controller> verify;if(!db_->loadControllers(verify,err)||verify.size()!=db_rows.size()){std::lock_guard lk(storage_mu_);storage_error_="controllers migration verification failed: "+err;return false;}db_rows=std::move(verify);
+        if(cfg_.getBool("database.remove_csv_after_migration",true)&&!backupAndRemove(path_,"controllers.csv",err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}
+    }
+    {std::lock_guard lk(mu_);controllers_=std::move(db_rows);}if(!loadControllerCards())return false;return true;
+}
+bool ControllerManager::saveControllers()const{
+    std::vector<Controller> snapshot;{std::lock_guard lk(mu_);snapshot=controllers_;}
+    if(usingMariaDb()){if(!db_)return false;std::string err;const bool ok=db_->saveControllers(snapshot,err);if(!ok){std::lock_guard lk(storage_mu_);storage_error_=err;}return ok;}
+    std::filesystem::create_directories(std::filesystem::path(path_).parent_path());auto tmp=path_+".tmp";std::ofstream f(tmp);if(!f)return false;f<<"node;name;model;enabled\n";for(auto&x:snapshot)f<<x.node<<';'<<x.name<<';'<<x.model<<';'<<(x.enabled?1:0)<<"\n";f.close();std::error_code ec;std::filesystem::rename(tmp,path_,ec);if(ec){std::filesystem::remove(path_,ec);ec.clear();std::filesystem::rename(tmp,path_,ec);}return !ec;
+}
 void ControllerManager::start(){if(running_.exchange(true))return;thread_=std::thread(&ControllerManager::loop,this);}
 void ControllerManager::stop(){running_=false;if(thread_.joinable())thread_.join();}
 std::vector<Controller>ControllerManager::controllers()const{std::lock_guard lk(mu_);return controllers_;}
@@ -91,23 +111,22 @@ std::string ControllerManager::serialDevice()const{std::lock_guard lk(mu_);retur
 void ControllerManager::setRawEventCallback(RawEventFn fn){std::lock_guard lk(mu_);raw_cb_=std::move(fn);}
 
 bool ControllerManager::loadControllerCards(){
-    std::lock_guard lk(card_mu_);controller_cards_.clear();std::ifstream f(controller_cards_path_);if(!f)return false;
-    std::string line;bool first=true;while(std::getline(f,line)){
-        if(first){first=false;continue;}if(util::trim(line).empty())continue;auto c=util::split(line,';');if(c.size()<7)continue;
-        try{
-            ControllerCardRecord x;x.card=c[0];x.controller_node=std::stoi(c[1]);x.controller_name=c[2];x.first_seen=c[3];x.last_seen=c[4];x.read_count=static_cast<std::uint64_t>(std::stoull(c[5]));x.last_raw_hex=c[6];
-            std::uint16_t series=0,number=0;if(!util::parseCardId(x.card,series,number,nullptr))continue;x.card=util::formatCardId(series,number);
-            controller_cards_[std::to_string(x.controller_node)+"|"+x.card]=std::move(x);
-        }catch(...){}
-    }return true;
+    auto readCsv=[&](std::vector<ControllerCardRecord>&out){std::ifstream f(controller_cards_path_);if(!f)return false;std::string line;bool first=true;while(std::getline(f,line)){if(first){first=false;continue;}if(util::trim(line).empty())continue;auto c=util::split(line,';');if(c.size()<7)continue;try{ControllerCardRecord x;x.card=c[0];x.controller_node=std::stoi(c[1]);x.controller_name=c[2];x.first_seen=c[3];x.last_seen=c[4];x.read_count=static_cast<std::uint64_t>(std::stoull(c[5]));x.last_raw_hex=c[6];std::uint16_t series=0,number=0;if(!util::parseCardId(x.card,series,number,nullptr))continue;x.card=util::formatCardId(series,number);out.push_back(std::move(x));}catch(...){}}return true;};
+    std::vector<ControllerCardRecord> rows;
+    if(usingMariaDb()){
+        if(!db_)return false;std::string err;if(!db_->loadControllerCards(rows,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}std::vector<ControllerCardRecord> csv;const bool csv_exists=readCsv(csv);if(csv_exists&&cfg_.getBool("database.migrate_runtime_csv",true)){
+            for(const auto&x:csv){auto it=std::find_if(rows.begin(),rows.end(),[&](const ControllerCardRecord&y){return y.controller_node==x.controller_node&&y.card==x.card;});if(it==rows.end())rows.push_back(x);else if(it->last_seen<x.last_seen)*it=x;}
+            if(!db_->saveControllerCards(rows,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}std::vector<ControllerCardRecord> verify;if(!db_->loadControllerCards(verify,err)||verify.size()!=rows.size()){std::lock_guard lk(storage_mu_);storage_error_="controller cards migration verification failed: "+err;return false;}rows=std::move(verify);
+            if(cfg_.getBool("database.remove_csv_after_migration",true)&&!backupAndRemove(controller_cards_path_,"controller_cards.csv",err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}
+        }
+    }else if(!readCsv(rows))return false;
+    std::lock_guard lk(card_mu_);controller_cards_.clear();for(auto&x:rows)controller_cards_[std::to_string(x.controller_node)+"|"+x.card]=std::move(x);return true;
 }
 
 bool ControllerManager::saveControllerCards()const{
-    std::lock_guard lk(card_mu_);const auto path=std::filesystem::path(controller_cards_path_);std::filesystem::create_directories(path.parent_path());const auto tmp=controller_cards_path_+".tmp";std::ofstream f(tmp,std::ios::trunc);if(!f)return false;
-    auto safe=[](std::string v){for(char&c:v)if(c==';'||c=='\n'||c=='\r')c=' ';return v;};
-    f<<"card;controller_node;controller_name;first_seen;last_seen;read_count;last_raw_hex\n";
-    for(const auto&[_,x]:controller_cards_)f<<safe(x.card)<<';'<<x.controller_node<<';'<<safe(x.controller_name)<<';'<<safe(x.first_seen)<<';'<<safe(x.last_seen)<<';'<<x.read_count<<';'<<safe(x.last_raw_hex)<<"\n";
-    f.close();std::error_code ec;std::filesystem::rename(tmp,controller_cards_path_,ec);if(ec){std::filesystem::remove(controller_cards_path_,ec);ec.clear();std::filesystem::rename(tmp,controller_cards_path_,ec);}return !ec;
+    std::vector<ControllerCardRecord> snapshot;{std::lock_guard lk(card_mu_);snapshot.reserve(controller_cards_.size());for(const auto&[_,x]:controller_cards_)snapshot.push_back(x);}
+    if(usingMariaDb()){if(!db_)return false;std::string err;const bool ok=db_->saveControllerCards(snapshot,err);if(!ok){std::lock_guard lk(storage_mu_);storage_error_=err;}return ok;}
+    const auto path=std::filesystem::path(controller_cards_path_);std::filesystem::create_directories(path.parent_path());const auto tmp=controller_cards_path_+".tmp";std::ofstream f(tmp,std::ios::trunc);if(!f)return false;auto safe=[](std::string v){for(char&c:v)if(c==';'||c=='\n'||c=='\r')c=' ';return v;};f<<"card;controller_node;controller_name;first_seen;last_seen;read_count;last_raw_hex\n";for(const auto&x:snapshot)f<<safe(x.card)<<';'<<x.controller_node<<';'<<safe(x.controller_name)<<';'<<safe(x.first_seen)<<';'<<safe(x.last_seen)<<';'<<x.read_count<<';'<<safe(x.last_raw_hex)<<"\n";f.close();std::error_code ec;std::filesystem::rename(tmp,controller_cards_path_,ec);if(ec){std::filesystem::remove(controller_cards_path_,ec);ec.clear();std::filesystem::rename(tmp,controller_cards_path_,ec);}return !ec;
 }
 
 std::vector<ControllerCardRecord> ControllerManager::controllerCards()const{
@@ -505,20 +524,7 @@ void ControllerManager::loop(){
 
                     // Never let an undecoded record block the controller FIFO forever.
                     // Preserve the full RAW frame locally before acknowledging/removing it.
-                    if(evt->card.empty()){
-                        try{
-                            const auto root=std::filesystem::path(path_).parent_path().parent_path();
-                            const auto dir=root/"data"/"events";
-                            std::filesystem::create_directories(dir);
-                            const auto file=dir/"undecoded_unex.csv";
-                            const bool need_header=!std::filesystem::exists(file)||std::filesystem::file_size(file)==0;
-                            std::ofstream raw(file,std::ios::app);
-                            if(raw){
-                                if(need_header)raw<<"time;node;command;raw_hex\n";
-                                raw<<util::nowLocal()<<';'<<node<<";25;"<<evt->raw_hex<<"\n";
-                            }
-                        }catch(...){}
-                    }
+                    if(evt->card.empty())attendance_.recordRawControllerEvent(node,cname,evt->raw_hex);
                 }
                 if(cb)cb(*evt);
                 if(!evt->card.empty()){

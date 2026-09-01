@@ -141,3 +141,14 @@ v0.3.6
 - PASS: legacy FILE mode still creates users.csv on first start
 - PASS: MariaDB schema/migration code compiles and links against libmariadb
 - SAFETY: users.csv is removed only after DB write + read-back verification and backup copy
+
+v0.3.7
+- PASS: clean Release build with MariaDB runtime tables
+- PASS: web/app.js syntax check
+- PASS: setup_mariadb.sh bash syntax check
+- PASS: legacy CSV mode starts and creates users/departments/controllers on first save
+- PASS: /api/status exposes present_count + registered_count for the header
+- PASS: dashboard no longer contains MariaDB/repeat/USB-COM stat cards; presence counter moved to header
+- COMPILE VERIFIED: users, departments, controllers, attendance events/state/activity and controller-card catalog have MariaDB backends
+- MIGRATION SAFETY: legacy runtime CSV is merged, read-back verified, backed up, then removed; RuntimeBootstrap does not recreate migrated CSV files
+- NOTE: real MariaDB server migration must be verified on the target Ubuntu host because the build container has Connector/C but no MariaDB server daemon

@@ -2,7 +2,6 @@
 #include "skud/EmbeddedWeb.h"
 #include <filesystem>
 #include <fstream>
-#include <string_view>
 
 namespace skud {
 namespace {
@@ -16,33 +15,6 @@ bool makeDir(const fs::path& path, std::string& error) {
         return false;
     }
     return true;
-}
-
-bool writeIfMissing(const fs::path& path, const char* data, std::size_t size, std::string& error) {
-    std::error_code ec;
-    if (fs::exists(path, ec)) {
-        if (ec) {
-            error = "cannot inspect " + path.string() + ": " + ec.message();
-            return false;
-        }
-        return true;
-    }
-    if (!makeDir(path.parent_path(), error)) return false;
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        error = "cannot create file " + path.string();
-        return false;
-    }
-    f.write(data, static_cast<std::streamsize>(size));
-    if (!f) {
-        error = "cannot write file " + path.string();
-        return false;
-    }
-    return true;
-}
-
-bool writeTextIfMissing(const fs::path& path, std::string_view text, std::string& error) {
-    return writeIfMissing(path, text.data(), text.size(), error);
 }
 
 bool writeOrRefresh(const fs::path& path, const char* data, std::size_t size, std::string& error) {
@@ -76,14 +48,10 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
         if (!makeDir(dir, error)) return false;
     }
 
-    // Runtime tables. users.csv is intentionally NOT recreated here: when
-    // MariaDB is enabled it is a one-time migration source and is removed after
-    // verified migration. In legacy FILE mode UserManager::save() creates it.
-    if (!writeTextIfMissing(base / "config" / "departments.csv", "name\n", error)) return false;
-    if (!writeTextIfMissing(base / "config" / "controllers.csv", "node;name;model;enabled\n", error)) return false;
-    if (!writeTextIfMissing(base / "data" / "card_state.csv", "state_key;state;last_read\n", error)) return false;
-    if (!writeTextIfMissing(base / "data" / "active_cards.csv", "card;user_id;user_name;department;last_read;last_event;controller_node\n", error)) return false;
-    if (!writeTextIfMissing(base / "data" / "controller_cards.csv", "card;controller_node;controller_name;first_seen;last_seen;read_count;last_raw_hex\n", error)) return false;
+    // Runtime CSV tables are intentionally NOT recreated here. In MariaDB
+    // mode they are one-time migration sources and must stay removed after a
+    // verified migration. In legacy CSV mode each manager creates its own file
+    // on the first save.
 
     // The complete UI is embedded in the executable. This makes a copied
     // binary self-contained: an empty working directory becomes runnable on
