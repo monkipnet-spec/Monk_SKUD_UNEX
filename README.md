@@ -1,3 +1,8 @@
+## v0.3.14 — User Address 0 + safer upload defaults
+- Исправлен допустимый диапазон H-series User Address на официальный `0..1023`; Address `0` теперь можно читать, записывать, отключать и использовать в полной синхронизации.
+- Окно «Выгрузка пользователей в контроллеры» теперь открывается в безопасном выборочном режиме: «Все пользователи» выключено, все пользовательские галочки сняты. Полная синхронизация/`85H` выполняется только после явного выбора «Все пользователи».
+- Контроллеры по-прежнему выбраны по умолчанию; пользователь должен явно выбрать пользователей либо включить полную синхронизацию.
+
 ## v0.3.13 — full controller synchronization
 - Раздел `Диагностика 87H` в интерфейсе переименован в **«Считать из контроллера»**.
 - Режим **«Все пользователи»** теперь является полной синхронизацией: перед записью выбранный контроллер очищает всю пользовательскую базу официальной H-series командой `85H`, затем программа записывает только пользователей Monk SKUD через `83H`.
@@ -9,7 +14,7 @@
 - 25H valid/invalid event decoder now extracts the official User Address from Data8/Data9; real event `03 FF` is shown as User Address 1023.
 - Controller-user deletion now uses official H-series `83H Set User Data` with only Access Mode changed to `00` (Invalid), followed by mandatory `87H` byte-for-byte verification.
 - The controller readback table has an **Отключить слот** action, including slots that do not exist in the local database. This safely disables stale duplicate cards without using destructive `85H Empty all Users`.
-- H-series user read ranges are constrained to the documented 1..1023 address space.
+- H-series user read ranges are constrained to the documented 0..1023 address space.
 
 # Monk_SKUD_UNEX
 
@@ -473,7 +478,7 @@ The supplied official **AR-721H / AR-727H Communication Protocol v1.2** resolves
 
 v0.3.11 therefore enables upload through the confirmed standard `0x7E` transport:
 
-1. Validate H-series User Address (`1..1023` in this application; the protocol memory map defines User 0..1023).
+1. Validate H-series User Address (`0..1023`).
 2. `87H` pre-read of the target address.
 3. `83H` write of Site/Card/PIN/Mode/Zone.
 4. ACK is required but is **not** considered sufficient.

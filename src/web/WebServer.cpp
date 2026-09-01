@@ -47,7 +47,7 @@ static std::string localUserName(const User&u){
 }
 
 static std::optional<User> uniqueUserByControllerPort(UserManager&users,int address){
-    if(address<=0)return std::nullopt;std::optional<User> found;
+    if(address<0||address>1023)return std::nullopt;std::optional<User> found;
     for(const auto&u:users.list())if(u.controller_port==address){if(found)return std::nullopt;found=u;}
     return found;
 }
@@ -301,10 +301,10 @@ WebServer::Res WebServer::route(const Req&r){
         std::vector<int> addresses;
         const auto mode=f["address_mode"].empty()?"local":f["address_mode"];
         if(mode=="local"){
-            for(const auto&u:local_users)if(u.controller_port>0&&u.controller_port<=1023)addresses.push_back(u.controller_port);
+            for(const auto&u:local_users)if(u.controller_port>=0&&u.controller_port<=1023)addresses.push_back(u.controller_port);
         }else if(mode=="range"){
             int from=0,to=0;try{from=std::stoi(f["range_from"]);to=std::stoi(f["range_to"]);}catch(...){}
-            if(from<1||to>1023||from>to)return{400,"application/json","{\"ok\":false,\"error\":\"range must be 1..1023 for AR-721H/727H\"}"};
+            if(from<0||to>1023||from>to)return{400,"application/json","{\"ok\":false,\"error\":\"range must be 0..1023 for AR-721H/727H\"}"};
             addresses.reserve(static_cast<std::size_t>(to-from+1));
             for(int a=from;a<=to;++a)addresses.push_back(a);
         }else{
@@ -331,7 +331,7 @@ WebServer::Res WebServer::route(const Req&r){
         auto f=util::parseForm(r.body);
         int node=0,address=0;
         try{node=std::stoi(f["controller_node"]);address=std::stoi(f["address"]);}catch(...){}
-        if(address<1||address>1023)return{400,"application/json","{\"ok\":false,\"error\":\"address must be 1..1023\"}"};
+        if(address<0||address>1023)return{400,"application/json","{\"ok\":false,\"error\":\"address must be 0..1023\"}"};
         auto allc=controllers_.controllers();
         auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
         if(it==allc.end())return{400,"application/json","{\"ok\":false,\"error\":\"controller not found or disabled\"}"};
@@ -357,8 +357,8 @@ WebServer::Res WebServer::route(const Req&r){
             std::map<int,int> address_owner;
             for(const auto&u:selected_users){
                 const std::string card=!u.card.empty()?u.card:(!u.cards.empty()?u.cards.front():std::string{});
-                if(u.controller_port<1||u.controller_port>1023){
-                    return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: active user "+std::to_string(u.id)+" has controller address outside 1..1023\"}"};
+                if(u.controller_port<0||u.controller_port>1023){
+                    return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: active user "+std::to_string(u.id)+" has controller address outside 0..1023\"}"};
                 }
                 if(card.empty()){
                     return{400,"application/json","{\"ok\":false,\"error\":\"full sync blocked: active user "+std::to_string(u.id)+" has no card\"}"};

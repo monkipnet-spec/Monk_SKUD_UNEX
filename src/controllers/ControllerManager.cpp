@@ -166,7 +166,7 @@ void ControllerManager::finishBlockedUserUpload(ControllerUserUploadJob&job,cons
             ControllerUserUploadResult r;r.user_id=u.id;r.controller_node=node;
             if(!u.enabled){r.status="skipped";r.message="Пользователь отключен";++job.skipped;}
             else if(u.card.empty()){r.status="skipped";r.message="У пользователя не задан номер карты";++job.skipped;}
-            else if(u.controller_port<=0){r.status="skipped";r.message="Не задан порт/адрес пользователя в контроллере";++job.skipped;}
+            else if(u.controller_port<0||u.controller_port>1023){r.status="skipped";r.message="Адрес пользователя вне диапазона 0..1023";++job.skipped;}
             else{r.status="blocked_protocol";r.message=Unex721Protocol::userWriteSupportMessage();++job.failed;}
             ++job.completed;job.results.push_back(std::move(r));
         }

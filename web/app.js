@@ -52,7 +52,7 @@ function cardDisplay(u){const cards=userCardIds(u).map(cardTextFromRaw);return c
 function userCardsHtml(u){const cards=userCardIds(u);if(!cards.length)return '—';return `<div class="user-cards-cell">${cards.map(c=>`<span class="user-card-chip">${esc(cardTextFromRaw(c))}</span>`).join('')}</div><small class="table-subtext">${cards.length} карт(а)</small>`;}
 function cardTextFromRaw(card){const s=String(card||'').trim();let m=s.match(/^(\d+):(\d+)$/);if(m)return Number(m[1])+' / '+Number(m[2]);return s||'—';}
 function accessModeText(mode){return ({card:'Только карта',card_or_pin:'Карта ИЛИ PIN',card_and_pin:'Карта + PIN'})[mode]||'Только карта';}
-async function loadUsers(){USERS=await (await api('/api/users')).json();USERS_LOADED=true;usersBody.innerHTML=USERS.map(u=>`<tr><td>${u.id}</td><td>${esc(u.last_name+' '+u.first_name+' '+u.middle_name)}</td><td>${esc(u.department||'—')}</td><td>${esc(u.position)}</td><td>${userCardsHtml(u)}</td><td>${u.pin_code?'<span class="status-pill status-present">PIN задан</span>':'—'}<small class="table-subtext">${esc(accessModeText(u.access_mode))}</small></td><td>${u.controller_port||'—'}</td><td><button class="mini" onclick="editUser(${u.id})">Изменить</button> <button class="mini danger" onclick="deleteUser(${u.id})">Удалить</button></td></tr>`).join('');}
+async function loadUsers(){USERS=await (await api('/api/users')).json();USERS_LOADED=true;usersBody.innerHTML=USERS.map(u=>`<tr><td>${u.id}</td><td>${esc(u.last_name+' '+u.first_name+' '+u.middle_name)}</td><td>${esc(u.department||'—')}</td><td>${esc(u.position)}</td><td>${userCardsHtml(u)}</td><td>${u.pin_code?'<span class="status-pill status-present">PIN задан</span>':'—'}<small class="table-subtext">${esc(accessModeText(u.access_mode))}</small></td><td>${Number.isInteger(Number(u.controller_port))?u.controller_port:'—'}</td><td><button class="mini" onclick="editUser(${u.id})">Изменить</button> <button class="mini danger" onclick="deleteUser(${u.id})">Удалить</button></td></tr>`).join('');}
 
 function departmentOptions(selected=''){
     let items=[...DEPARTMENTS];
@@ -207,7 +207,7 @@ function updateReadMode(){
 }
 
 function selectedReadControllers(){return [...document.querySelectorAll('.read-controller:checked')].map(x=>Number(x.value)).filter(Boolean);}
-function localReadAddresses(){return [...new Set(USERS.map(u=>Number(u.controller_port)||0).filter(x=>x>=1&&x<=1023))].sort((a,b)=>a-b);}
+function localReadAddresses(){return [...new Set(USERS.map(u=>Number(u.controller_port)||0).filter(x=>x>=0&&x<=1023))].sort((a,b)=>a-b);}
 
 function updateReadSummary(){
     if(!window.readSelectionSummary)return;
@@ -289,7 +289,7 @@ async function startUserRead(){
     let addressMode='local',from='',to='',addressCount=localReadAddresses().length;
     if(readModeRange.checked){
         addressMode='range';from=Number(readRangeFrom.value)||0;to=Number(readRangeTo.value)||0;
-        if(from<1||to>1023||from>to)return alert('Диапазон адресов AR-721H/727H должен быть в пределах 1..1023');
+        if(from<0||to>1023||from>to)return alert('Диапазон адресов AR-721H/727H должен быть в пределах 0..1023');
         addressCount=to-from+1;
     }else if(!addressCount)return alert('У пользователей в системе не задан ни один адрес в контроллере');
 
@@ -319,8 +319,8 @@ async function startUserRead(){
 async function openUserUpload(){
     if(!USERS_LOADED)await loadUsers();
     await loadControllers();
-    uploadAllUsers.checked=true;uploadAllControllers.checked=true;
-    uploadUsersList.innerHTML=USERS.length?USERS.map(u=>`<label class="check selection-item"><input type="checkbox" class="upload-user" value="${u.id}" checked> <span><b>${u.id} — ${esc(userDisplayName(u))}</b><small>${esc(u.department||'Без отдела')} · карта ${esc(cardDisplay(u))} · ${u.pin_code?'PIN задан · ':''}${esc(accessModeText(u.access_mode))} · порт ${u.controller_port||'не задан'}</small></span></label>`).join(''):'<div class="muted">Пользователей нет</div>';
+    uploadAllUsers.checked=false;uploadAllControllers.checked=true;
+    uploadUsersList.innerHTML=USERS.length?USERS.map(u=>`<label class="check selection-item"><input type="checkbox" class="upload-user" value="${u.id}"> <span><b>${u.id} — ${esc(userDisplayName(u))}</b><small>${esc(u.department||'Без отдела')} · карта ${esc(cardDisplay(u))} · ${u.pin_code?'PIN задан · ':''}${esc(accessModeText(u.access_mode))} · адрес ${u.controller_port}</small></span></label>`).join(''):'<div class="muted">Пользователей нет</div>';
     uploadControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="upload-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
     uploadResult.innerHTML='';
     toggleUploadSelection('users');toggleUploadSelection('controllers');updateUploadSummary();
@@ -386,7 +386,7 @@ async function openUserDelete(preselectedId=0){
     deleteFromControllers.checked=true;
     deleteAllUsers.checked=false;
     deleteAllControllers.checked=true;
-    deleteUsersList.innerHTML=USERS.length?USERS.map(u=>`<label class="check selection-item"><input type="checkbox" class="delete-user" value="${u.id}" ${preselectedId===u.id?'checked':''}> <span><b>${u.id} — ${esc(userDisplayName(u))}</b><small>${esc(u.department||'Без отдела')} · карта ${esc(cardDisplay(u))} · ${u.pin_code?'PIN задан · ':''}${esc(accessModeText(u.access_mode))} · порт ${u.controller_port||'не задан'}</small></span></label>`).join(''):'<div class="muted">Пользователей нет</div>';
+    deleteUsersList.innerHTML=USERS.length?USERS.map(u=>`<label class="check selection-item"><input type="checkbox" class="delete-user" value="${u.id}" ${preselectedId===u.id?'checked':''}> <span><b>${u.id} — ${esc(userDisplayName(u))}</b><small>${esc(u.department||'Без отдела')} · карта ${esc(cardDisplay(u))} · ${u.pin_code?'PIN задан · ':''}${esc(accessModeText(u.access_mode))} · адрес ${u.controller_port}</small></span></label>`).join(''):'<div class="muted">Пользователей нет</div>';
     deleteControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="delete-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
     deleteResult.innerHTML='';
     toggleDeleteSelection('controllers');

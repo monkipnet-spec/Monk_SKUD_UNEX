@@ -1,9 +1,9 @@
-Monk_SKUD_UNEX v0.3.12
+Monk_SKUD_UNEX v0.3.14
 Release build: PASS
 web/app.js syntax: PASS
 Official protocol basis: AR-721H / AR-727H Communication Protocol v1.2.
-Confirmed from real hardware log: 25H valid event for physical card 112:53910 contains Data8/Data9 = 03 FF, therefore User Address = 0x03FF = 1023.
-Event parser mapping test: PASS (event=0B, address=1023, site=112, card=53910).
-83H stale-slot invalidation: Mode byte is changed to 00 (Invalid), other 7 user bytes preserved, mandatory 87H exact read-back verification enabled.
-Destructive 85H Empty all Users is NOT used.
-H-series user address safety range: 1..1023.
+H-series user address range: 0..1023 (Address 0 is valid).
+83H Set User Data: enabled with mandatory 87H exact read-back verification.
+Full synchronization: explicit opt-in only. When the operator checks “Все пользователи”, selected controllers are cleared with 85H and rebuilt from active Monk SKUD users.
+Upload dialog default: “Все пользователи” OFF and every individual user checkbox OFF; therefore opening the dialog cannot start or imply a full synchronization.
+Controller selection remains enabled by default; at least one user or explicit “Все пользователи” selection is required before upload.

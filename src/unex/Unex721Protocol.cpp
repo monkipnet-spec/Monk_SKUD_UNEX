@@ -158,13 +158,13 @@ bool Unex721Protocol::setSystemTime(std::uint8_t node){
 
 bool Unex721Protocol::userWriteSupported(){return true;}
 std::string Unex721Protocol::userWriteSupportMessage(){
-    return "H-series user upload: official 83H Set User Data over standard 0x7E, User Address 1..1023, with mandatory 87H byte-for-byte read-back verification. 84H is not used for writing.";
+    return "H-series user upload: official 83H Set User Data over standard 0x7E, User Address 0..1023, with mandatory 87H byte-for-byte read-back verification. 84H is not used for writing.";
 }
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::writeUser(std::uint8_t node,const User& user){
     const int address=user.controller_port;
-    if(address<=0||address>1023)
-        return{false,"skipped","Для AR-721H/727H допустимый User Address 1..1023 (по Memory Layout протокола)"};
+    if(address<0||address>1023)
+        return{false,"skipped","Для AR-721H/727H допустимый User Address 0..1023 (по Memory Layout протокола)"};
 
     std::string card=user.card;
     if(card.empty()&&!user.cards.empty())card=user.cards.front();
@@ -245,8 +245,8 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::clearAllUsers(std::uint8_t no
 
 Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,const User& user){
     const int address=user.controller_port;
-    if(address<=0||address>1023)
-        return{false,"skipped","Для AR-721H/727H допустимый User Address 1..1023"};
+    if(address<0||address>1023)
+        return{false,"skipped","Для AR-721H/727H допустимый User Address 0..1023"};
 
     // Official 83H defines Mode=00 as Invalid.  Disable the slot with the
     // smallest possible change: preserve Site/Card/PIN/Zone and change only
@@ -289,8 +289,8 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,
 Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int address){
     UserReadOutcome out;
     out.address=address;
-    if(address<=0||address>1023){
-        out.message="Адрес пользователя должен быть 1..1023 для AR-721H/727H";
+    if(address<0||address>1023){
+        out.message="Адрес пользователя должен быть 0..1023 для AR-721H/727H";
         return out;
     }
     const auto a=static_cast<std::uint16_t>(address);
