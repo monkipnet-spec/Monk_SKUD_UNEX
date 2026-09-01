@@ -39,6 +39,11 @@ public:
     std::uint64_t queueUserDelete(std::vector<User> users,std::vector<int> controller_nodes,bool delete_from_system);
     std::optional<ControllerUserDeleteJob> userDeleteJob(std::uint64_t id) const;
 
+    // Read users back from controllers with 0x87. Jobs are processed in small
+    // batches so long scans do not starve normal event polling.
+    std::uint64_t queueUserRead(std::vector<User> local_users,std::vector<int> controller_nodes,std::vector<int> addresses,bool include_empty);
+    std::optional<ControllerUserReadJob> userReadJob(std::uint64_t id) const;
+
 private:
     struct PendingUserUpload {
         std::uint64_t id{};
@@ -51,10 +56,20 @@ private:
         std::vector<int> controller_nodes;
         bool delete_from_system{false};
     };
+    struct PendingUserRead {
+        std::uint64_t id{};
+        std::vector<User> local_users;
+        std::vector<int> controller_nodes;
+        std::vector<int> addresses;
+        bool include_empty{false};
+        std::size_t controller_index{};
+        std::size_t address_index{};
+    };
 
     void loop();
     void processOneUserUpload(Unex721Protocol& proto);
     void processOneUserDelete(Unex721Protocol& proto);
+    void processUserReadBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
 
     Config& cfg_; AttendanceEngine& attendance_; UserManager& users_; std::string path_;
@@ -70,4 +85,9 @@ private:
     std::deque<PendingUserDelete> delete_queue_;
     std::map<std::uint64_t,ControllerUserDeleteJob> delete_jobs_;
     std::uint64_t next_delete_id_{1};
+
+    mutable std::mutex read_mu_;
+    std::deque<PendingUserRead> read_queue_;
+    std::map<std::uint64_t,ControllerUserReadJob> read_jobs_;
+    std::uint64_t next_read_id_{1};
 }; }

@@ -80,6 +80,38 @@ WebServer::Res WebServer::jsonUserDeleteJob(const ControllerUserDeleteJob&job){
     o<<"]}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
+WebServer::Res WebServer::jsonUserReadJob(const ControllerUserReadJob&job){
+    std::ostringstream o;
+    o<<"{\"id\":"<<job.id
+     <<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\""
+     <<",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"total\":"<<job.total
+     <<",\"completed\":"<<job.completed
+     <<",\"matches\":"<<job.matches
+     <<",\"differences\":"<<job.differences
+     <<",\"missing\":"<<job.missing
+     <<",\"unknown\":"<<job.unknown
+     <<",\"empty\":"<<job.empty
+     <<",\"failed\":"<<job.failed
+     <<",\"results\":[";
+    bool first=true;
+    for(const auto&r:job.results){
+        if(!first)o<<',';first=false;
+        o<<"{\"controller_node\":"<<r.controller_node
+         <<",\"address\":"<<r.address
+         <<",\"local_user_id\":"<<r.local_user_id
+         <<",\"local_user_name\":\""<<util::jsonEscape(r.local_user_name)<<"\""
+         <<",\"controller_card\":\""<<util::jsonEscape(r.controller_card)<<"\""
+         <<",\"controller_enabled\":"<<(r.controller_enabled?"true":"false")
+         <<",\"pin_set\":"<<(r.pin_set?"true":"false")
+         <<",\"access_mode\":\""<<util::jsonEscape(r.access_mode)<<"\""
+         <<",\"status\":\""<<util::jsonEscape(r.status)<<"\""
+         <<",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";
+    }
+    o<<"]}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"repeat_seconds\":"<<cfg_.getInt("attendance.accidental_repeat_seconds",60)<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonReportSettings(){
     const auto today=reports_.todayRange(),week=reports_.currentWeekRange(),month=reports_.currentMonthRange();
@@ -137,6 +169,50 @@ WebServer::Res WebServer::route(const Req&r){
         return{ok?200:400,"application/json; charset=utf-8",o.str()};
     }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
+    if(r.path=="/api/controllers/read-users"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);
+        std::vector<int> selected_nodes;
+        auto allc=controllers_.controllers();
+        if(f["all_controllers"]=="1"){
+            for(const auto&c:allc)if(c.enabled)selected_nodes.push_back(c.node);
+        }else{
+            for(int node:parseIntList(f["controller_nodes"])){
+                auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+                if(it!=allc.end())selected_nodes.push_back(node);
+            }
+        }
+        if(selected_nodes.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no controllers selected\"}"};
+
+        auto local_users=users_.list();
+        std::vector<int> addresses;
+        const auto mode=f["address_mode"].empty()?"local":f["address_mode"];
+        if(mode=="local"){
+            for(const auto&u:local_users)if(u.controller_port>0&&u.controller_port<=16383)addresses.push_back(u.controller_port);
+        }else if(mode=="range"){
+            int from=0,to=0;try{from=std::stoi(f["range_from"]);to=std::stoi(f["range_to"]);}catch(...){}
+            if(from<1||to>16383||from>to)return{400,"application/json","{\"ok\":false,\"error\":\"range must be 1..16383\"}"};
+            addresses.reserve(static_cast<std::size_t>(to-from+1));
+            for(int a=from;a<=to;++a)addresses.push_back(a);
+        }else{
+            return{400,"application/json","{\"ok\":false,\"error\":\"bad address mode\"}"};
+        }
+        std::sort(addresses.begin(),addresses.end());
+        addresses.erase(std::unique(addresses.begin(),addresses.end()),addresses.end());
+        if(addresses.empty())return{400,"application/json","{\"ok\":false,\"error\":\"no user addresses to read\"}"};
+
+        const bool include_empty=f["include_empty"]=="1";
+        const auto count=addresses.size()*selected_nodes.size();
+        auto id=controllers_.queueUserRead(std::move(local_users),std::move(selected_nodes),std::move(addresses),include_empty);
+        std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"total\":"<<count<<"}";
+        return{200,"application/json",o.str()};
+    }
+    if(r.path=="/api/controllers/read-users/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.userReadJob(id);
+        if(!job)return{404,"application/json","{\"error\":\"read job not found\"}"};
+        return jsonUserReadJob(*job);
+    }
+
     if(r.path=="/api/controllers/upload-users"&&r.method=="POST"){
         auto f=util::parseForm(r.body);std::vector<User> selected_users;std::vector<int> selected_nodes;
         const auto all_users=f["all_users"]=="1";const auto all_controllers=f["all_controllers"]=="1";

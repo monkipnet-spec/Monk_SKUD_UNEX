@@ -1,3 +1,13 @@
+v0.2.6 controller user readback:
+- Release build: PASS ([100%] Built target monk-skud-unex).
+- Added 0x87 readUser(address) parser for UID1/UID2/PIN/mode: PASS.
+- Pseudo-TTY protocol test: address 100 -> series 112 / number 12345 / PIN set / card_or_pin: PASS.
+- Web UI button "Считать из контроллера" and selection dialog: PASS.
+- Local-address mode and arbitrary 1..16383 range mode: PASS.
+- Read jobs are processed in small ControllerManager batches to preserve normal polling: PASS.
+- PIN value is used only for internal comparison and is not exposed by the readback JSON/UI: PASS.
+- Web UI cache revision: v=026.
+
 v0.2.5 attendance reports / Telegram schedule:
 - Clean Release build: PASS ([100%] Built target monk-skud-unex).
 - Manual report range 2026-08-30..2026-08-31: PASS (2 days, 2 users, 3 user/day rows).

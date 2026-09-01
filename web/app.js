@@ -90,6 +90,115 @@ async function loadControllers(){CONTROLLERS=await (await api('/api/controllers'
 function userDisplayName(u){return [u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);}
 function controllerDisplayName(c){return c.name||('Контроллер '+c.node);}
 
+
+async function openUserRead(){
+    if(!USERS_LOADED)await loadUsers();
+    await loadControllers();
+    readAllControllers.checked=true;
+    readModeLocal.checked=true;
+    readModeRange.checked=false;
+    readIncludeEmpty.checked=false;
+    readControllersList.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<label class="check selection-item"><input type="checkbox" class="read-controller" value="${c.node}" checked> <span><b>${c.node} — ${esc(controllerDisplayName(c))}</b><small>${c.online?'ONLINE':'OFFLINE'} · ${esc(c.model||'UNEX 721')}</small></span></label>`).join(''):'<div class="muted">Контроллеры ещё не обнаружены</div>';
+    readResult.innerHTML='';
+    toggleReadControllers();
+    updateReadMode();
+    updateReadSummary();
+    readUsersDialog.showModal();
+}
+
+function toggleReadControllers(){
+    document.querySelectorAll('.read-controller').forEach(x=>{x.disabled=readAllControllers.checked;if(readAllControllers.checked)x.checked=true;});
+    updateReadSummary();
+}
+
+function updateReadMode(){
+    const range=readModeRange.checked;
+    readRangeFields.classList.toggle('disabled-panel',!range);
+    readRangeFrom.disabled=!range;
+    readRangeTo.disabled=!range;
+    updateReadSummary();
+}
+
+function selectedReadControllers(){return [...document.querySelectorAll('.read-controller:checked')].map(x=>Number(x.value)).filter(Boolean);}
+function localReadAddresses(){return [...new Set(USERS.map(u=>Number(u.controller_port)||0).filter(x=>x>=1&&x<=16383))].sort((a,b)=>a-b);}
+
+function updateReadSummary(){
+    if(!window.readSelectionSummary)return;
+    const controllerCount=readAllControllers.checked?CONTROLLERS.length:selectedReadControllers().length;
+    let addressCount=0;
+    let extra='';
+    if(readModeLocal.checked){
+        const a=localReadAddresses();addressCount=a.length;
+        extra=a.length?`Адреса: ${a.join(', ')}`:'У пользователей не заданы адреса в контроллере.';
+    }else{
+        const from=Number(readRangeFrom.value)||0,to=Number(readRangeTo.value)||0;
+        if(from>=1&&to>=from&&to<=16383)addressCount=to-from+1;
+        extra=addressCount>1000?'Большой диапазон может читаться несколько минут и более.':'Диапазон читается последовательно командой 0x87.';
+    }
+    readSelectionSummary.innerHTML=`Будет прочитано: <b>${addressCount}</b> адрес(ов) × <b>${controllerCount}</b> контроллер(ов) = <b>${addressCount*controllerCount}</b> операций.<br><small>${esc(extra)}</small>`;
+}
+document.addEventListener('change',e=>{if(e.target.matches&&e.target.matches('.read-controller'))updateReadSummary();});
+
+function readStatusText(status){return ({match:'Совпадает',diff:'Отличается',missing:'Нет в контроллере',unknown:'Нет в системе',empty:'Пусто',error:'Ошибка'})[status]||status;}
+function renderUserReadJob(job){
+    const state=({queued:'В очереди',running:'Чтение',completed:'Завершено'})[job.state]||job.state;
+    const rows=(job.results||[]).map(r=>{
+        const c=CONTROLLERS.find(x=>x.node===r.controller_node);
+        const cls=r.status==='match'?'ok':r.status==='empty'?'muted':'bad';
+        const ctrlData=r.controller_card
+            ?`${esc(cardTextFromRaw(r.controller_card))}<small class="table-subtext">${r.controller_enabled?'Активен':'Отключен'} · ${r.pin_set?'PIN задан':'PIN нет'} · ${esc(accessModeText(r.access_mode))}</small>`
+            :'—';
+        const local=r.local_user_id?`${r.local_user_id} — ${esc(r.local_user_name||'')}`:'—';
+        return `<tr><td>${r.controller_node} — ${esc(c?controllerDisplayName(c):'')}</td><td>${r.address}</td><td>${ctrlData}</td><td>${local}</td><td class="${cls}"><b>${esc(readStatusText(r.status))}</b><small class="table-subtext">${esc(r.message||'')}</small></td></tr>`;
+    }).join('');
+    readResult.innerHTML=`<div class="upload-job-state"><b>${esc(state)}</b> · ${job.completed}/${job.total} · совпало ${job.matches} · отличается ${job.differences} · нет в контроллере ${job.missing} · неизвестных ${job.unknown} · пустых ${job.empty} · ошибок ${job.failed}</div>${rows?`<div class="upload-result-table read-result-table"><table><thead><tr><th>Контроллер</th><th>Адрес</th><th>Данные контроллера</th><th>Пользователь в системе</th><th>Сравнение</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+}
+
+async function pollUserRead(jobId){
+    for(let n=0;n<7200;n++){
+        const r=await api('/api/controllers/read-users/status?job_id='+encodeURIComponent(jobId));
+        if(!r.ok)return;
+        const job=await r.json();renderUserReadJob(job);
+        if(job.state!=='queued'&&job.state!=='running')return;
+        await new Promise(resolve=>setTimeout(resolve,700));
+    }
+}
+
+async function startUserRead(){
+    const nodes=selectedReadControllers();
+    if(!readAllControllers.checked&&!nodes.length)return alert('Выберите хотя бы один контроллер');
+    if(readAllControllers.checked&&!CONTROLLERS.length)return alert('Нет обнаруженных контроллеров');
+
+    let addressMode='local',from='',to='',addressCount=localReadAddresses().length;
+    if(readModeRange.checked){
+        addressMode='range';from=Number(readRangeFrom.value)||0;to=Number(readRangeTo.value)||0;
+        if(from<1||to>16383||from>to)return alert('Диапазон адресов должен быть в пределах 1..16383');
+        addressCount=to-from+1;
+    }else if(!addressCount)return alert('У пользователей в системе не задан ни один адрес в контроллере');
+
+    const controllerCount=readAllControllers.checked?CONTROLLERS.length:nodes.length;
+    if(addressCount*controllerCount>1000&&!confirm(`Будет выполнено ${addressCount*controllerCount} последовательных чтений 0x87. Это может занять длительное время. Продолжить?`))return;
+
+    startReadButton.disabled=true;
+    readResult.innerHTML='<div class="muted">Создание задания чтения...</div>';
+    try{
+        const r=await api('/api/controllers/read-users',{
+            method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body:enc({
+                all_controllers:readAllControllers.checked?'1':'0',
+                controller_nodes:nodes.join(','),
+                address_mode:addressMode,
+                range_from:String(from),
+                range_to:String(to),
+                include_empty:readIncludeEmpty.checked?'1':'0'
+            })
+        });
+        const j=await r.json();
+        if(!r.ok||!j.ok){readResult.innerHTML='<div class="bad">Ошибка: '+esc(j.error||'не удалось создать задание')+'</div>';return;}
+        await pollUserRead(j.job_id);
+    }finally{startReadButton.disabled=false;}
+}
+
 async function openUserUpload(){
     if(!USERS_LOADED)await loadUsers();
     await loadControllers();

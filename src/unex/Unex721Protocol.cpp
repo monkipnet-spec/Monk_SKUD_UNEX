@@ -48,6 +48,14 @@ std::string accessModeText(const User& user){
     if(user.access_mode=="card_and_pin")return "карта + PIN";
     return "только карта";
 }
+
+std::string accessModeFromByte(std::uint8_t mode){
+    switch(mode&0xC0){
+        case 0x80:return "card_or_pin";
+        case 0xC0:return "card_and_pin";
+        default:return "card";
+    }
+}
 }
 
 std::vector<std::uint8_t> Unex721Protocol::frame(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data){
@@ -226,6 +234,45 @@ Unex721Protocol::UserWriteOutcome Unex721Protocol::deleteUser(std::uint8_t node,
     }
     std::ostringstream m;m<<"Удалён и проверен: адрес "<<address;
     return{true,"ok",m.str()};
+}
+
+
+Unex721Protocol::UserReadOutcome Unex721Protocol::readUser(std::uint8_t node,int address){
+    UserReadOutcome out;
+    out.address=address;
+    if(address<=0||address>16383){
+        out.message="Адрес пользователя должен быть 1..16383";
+        return out;
+    }
+    const auto a=static_cast<std::uint16_t>(address);
+    const std::vector<std::uint8_t> read_data={
+        static_cast<std::uint8_t>((a>>8)&0xFF),static_cast<std::uint8_t>(a&0xFF),0x01
+    };
+    auto r=transactExtended(node,0x87,read_data,300);
+    if(!r){out.message="Нет корректного ответа на 0x87";return out;}
+    if(r->size()<22){out.message="Короткий ответ контроллера на 0x87";return out;}
+    if((*r)[7]==NACK){out.message="Контроллер вернул NACK на чтение 0x87";return out;}
+
+    out.uid1=(static_cast<std::uint16_t>((*r)[13])<<8)|(*r)[14];
+    out.uid2=(static_cast<std::uint16_t>((*r)[15])<<8)|(*r)[16];
+    out.pin=(static_cast<std::uint32_t>((*r)[17])<<24)|
+            (static_cast<std::uint32_t>((*r)[18])<<16)|
+            (static_cast<std::uint32_t>((*r)[19])<<8)|(*r)[20];
+    out.mode=(*r)[21];
+    out.enabled=out.mode>0;
+    out.present=!(out.mode==0&&out.uid1==0xFFFF&&out.uid2==0xFFFF);
+    out.access_mode=accessModeFromByte(out.mode);
+    out.ok=true;
+
+    std::ostringstream m;
+    if(!out.present)m<<"Адрес "<<address<<" пуст";
+    else{
+        m<<"Адрес "<<address<<": карта "<<util::formatCardSeries(out.uid1)<<" / "<<out.uid2
+         <<", "<<(out.enabled?"активен":"отключен")
+         <<", PIN "<<(out.pin?"задан":"нет");
+    }
+    out.message=m.str();
+    return out;
 }
 
 

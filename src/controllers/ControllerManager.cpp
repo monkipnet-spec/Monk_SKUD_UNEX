@@ -13,6 +13,18 @@
 #include <sstream>
 
 namespace skud {
+namespace {
+std::string userFullName(const User& u){
+    std::string n=u.last_name;
+    if(!u.first_name.empty()){if(!n.empty())n+=' ';n+=u.first_name;}
+    if(!u.middle_name.empty()){if(!n.empty())n+=' ';n+=u.middle_name;}
+    return n.empty()?("Пользователь №"+std::to_string(u.id)):n;
+}
+std::uint32_t localPinValue(const User& u){
+    if(u.pin_code.empty())return 0;
+    try{return static_cast<std::uint32_t>(std::stoul(u.pin_code));}catch(...){return 0;}
+}
+}
 ControllerManager::ControllerManager(Config&c,AttendanceEngine&a,UserManager&u,std::string p):cfg_(c),attendance_(a),users_(u),path_(std::move(p)){}
 ControllerManager::~ControllerManager(){stop();}
 bool ControllerManager::loadControllers(){std::lock_guard lk(mu_);controllers_.clear();std::ifstream f(path_);if(!f)return false;std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()<4)continue;try{Controller x;x.node=std::stoi(c[0]);x.name=c[1];x.model=c[2];x.enabled=c[3]!="0";controllers_.push_back(x);}catch(...){}}return true;}
@@ -81,6 +93,148 @@ std::optional<ControllerUserDeleteJob> ControllerManager::userDeleteJob(std::uin
     auto it=delete_jobs_.find(id);
     if(it==delete_jobs_.end())return std::nullopt;
     return it->second;
+}
+
+
+std::uint64_t ControllerManager::queueUserRead(std::vector<User> local_users,std::vector<int> controller_nodes,std::vector<int> addresses,bool include_empty){
+    std::sort(addresses.begin(),addresses.end());
+    addresses.erase(std::remove_if(addresses.begin(),addresses.end(),[](int a){return a<=0||a>16383;}),addresses.end());
+    addresses.erase(std::unique(addresses.begin(),addresses.end()),addresses.end());
+
+    std::lock_guard lk(read_mu_);
+    const auto id=next_read_id_++;
+    ControllerUserReadJob job;
+    job.id=id;
+    job.created_at=util::nowLocal();
+    job.state=(controller_nodes.empty()||addresses.empty())?"completed":"queued";
+    job.total=static_cast<int>(controller_nodes.size()*addresses.size());
+    read_jobs_[id]=job;
+    if(job.state=="queued"){
+        PendingUserRead p;
+        p.id=id;p.local_users=std::move(local_users);p.controller_nodes=std::move(controller_nodes);
+        p.addresses=std::move(addresses);p.include_empty=include_empty;
+        read_queue_.push_back(std::move(p));
+    }
+    while(read_jobs_.size()>20)read_jobs_.erase(read_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerUserReadJob> ControllerManager::userReadJob(std::uint64_t id)const{
+    std::lock_guard lk(read_mu_);
+    auto it=read_jobs_.find(id);
+    if(it==read_jobs_.end())return std::nullopt;
+    return it->second;
+}
+
+void ControllerManager::processUserReadBatch(Unex721Protocol& proto){
+    constexpr int batch_size=6;
+    for(int batch=0;batch<batch_size&&running_;++batch){
+        std::uint64_t job_id=0;
+        int node=0,address=0;
+        bool include_empty=false,last_task=false;
+        std::optional<User> local;
+
+        {
+            std::lock_guard lk(read_mu_);
+            if(read_queue_.empty())return;
+            auto& p=read_queue_.front();
+            auto jit=read_jobs_.find(p.id);
+            if(jit==read_jobs_.end()){read_queue_.pop_front();continue;}
+            jit->second.state="running";
+
+            if(p.controller_index>=p.controller_nodes.size()){
+                jit->second.state="completed";read_queue_.pop_front();continue;
+            }
+
+            job_id=p.id;
+            node=p.controller_nodes[p.controller_index];
+            address=p.addresses[p.address_index];
+            include_empty=p.include_empty;
+            for(const auto& u:p.local_users)if(u.controller_port==address){local=u;break;}
+
+            ++p.address_index;
+            if(p.address_index>=p.addresses.size()){
+                p.address_index=0;
+                ++p.controller_index;
+            }
+            last_task=p.controller_index>=p.controller_nodes.size();
+        }
+
+        auto got=proto.readUser(static_cast<std::uint8_t>(node),address);
+        ControllerUserReadResult result;
+        result.controller_node=node;
+        result.address=address;
+        if(local){
+            result.local_user_id=local->id;
+            result.local_user_name=userFullName(*local);
+        }
+
+        bool keep_result=true;
+        if(!got.ok){
+            result.status="error";
+            result.message=got.message;
+        }else if(!got.present){
+            if(local&&local->enabled&&!local->card.empty()){
+                result.status="missing";
+                result.message="В системе пользователь назначен на этот адрес, но запись в контроллере отсутствует";
+            }else if(local){
+                result.status="match";
+                result.message="Локальный пользователь отключён/без карты, запись контроллера пуста";
+            }else{
+                result.status="empty";
+                result.message="Пустой адрес";
+                keep_result=include_empty;
+            }
+        }else{
+            result.controller_card=util::formatCardId(got.uid1,got.uid2);
+            result.controller_enabled=got.enabled;
+            result.pin_set=got.pin!=0;
+            result.access_mode=got.access_mode;
+            if(!local){
+                result.status="unknown";
+                result.message="Запись есть в контроллере, но в системе нет пользователя с таким адресом";
+            }else{
+                std::uint16_t expect1=0,expect2=0;
+                std::string err;
+                const bool card_ok=util::parseCardId(local->card,expect1,expect2,&err)&&expect1==got.uid1&&expect2==got.uid2;
+                const bool enabled_ok=local->enabled==got.enabled;
+                const bool pin_ok=localPinValue(*local)==got.pin;
+                const bool mode_ok=(local->access_mode.empty()?"card":local->access_mode)==got.access_mode;
+                if(card_ok&&enabled_ok&&pin_ok&&mode_ok){
+                    result.status="match";
+                    result.message="Запись контроллера полностью совпадает с системой";
+                }else{
+                    result.status="diff";
+                    std::ostringstream m;
+                    m<<"Отличия:";
+                    if(!card_ok)m<<" карта";
+                    if(!enabled_ok)m<<" активность";
+                    if(!pin_ok)m<<" PIN";
+                    if(!mode_ok)m<<" режим";
+                    result.message=m.str();
+                }
+            }
+        }
+
+        {
+            std::lock_guard lk(read_mu_);
+            auto it=read_jobs_.find(job_id);
+            if(it!=read_jobs_.end()){
+                auto& job=it->second;
+                ++job.completed;
+                if(result.status=="match")++job.matches;
+                else if(result.status=="diff")++job.differences;
+                else if(result.status=="missing")++job.missing;
+                else if(result.status=="unknown")++job.unknown;
+                else if(result.status=="empty")++job.empty;
+                else ++job.failed;
+                if(keep_result)job.results.push_back(std::move(result));
+                if(last_task)job.state="completed";
+            }
+            if(last_task&&!read_queue_.empty()&&read_queue_.front().id==job_id)read_queue_.pop_front();
+        }
+        if(last_task)return;
+    }
 }
 
 void ControllerManager::processOneUserUpload(Unex721Protocol&proto){
@@ -159,7 +313,7 @@ void ControllerManager::loop(){
             if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
         }
-        Unex721Protocol proto(port); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+        Unex721Protocol proto(port); processUserReadBatch(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
             for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){

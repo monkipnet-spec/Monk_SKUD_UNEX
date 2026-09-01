@@ -114,6 +114,35 @@ struct ControllerUserDeleteJob {
     std::vector<ControllerUserDeleteResult> results;
 };
 
+
+struct ControllerUserReadResult {
+    int controller_node{};
+    int address{};
+    int local_user_id{};
+    std::string local_user_name;
+    std::string controller_card;
+    bool controller_enabled{false};
+    bool pin_set{false};
+    std::string access_mode;
+    std::string status; // match, diff, missing, unknown, empty, error
+    std::string message;
+};
+
+struct ControllerUserReadJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed
+    int total{};
+    int completed{};
+    int matches{};
+    int differences{};
+    int missing{};
+    int unknown{};
+    int empty{};
+    int failed{};
+    std::vector<ControllerUserReadResult> results;
+};
+
 struct RawUnexEvent {
     int node{};
     std::vector<std::uint8_t> frame;
