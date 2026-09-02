@@ -106,6 +106,7 @@ void ControllerManager::start(){if(running_.exchange(true))return;thread_=std::t
 void ControllerManager::stop(){running_=false;if(thread_.joinable())thread_.join();}
 std::vector<Controller>ControllerManager::controllers()const{std::lock_guard lk(mu_);return controllers_;}
 bool ControllerManager::renameController(int node,const std::string&name){{std::lock_guard lk(mu_);bool ok=false;for(auto&c:controllers_)if(c.node==node){c.name=name;ok=true;}if(!ok)return false;}return saveControllers();}
+void ControllerManager::requestControllerRefresh(){refresh_requested_=true;}
 std::string ControllerManager::serialStatus()const{std::lock_guard lk(mu_);return serial_status_;}
 std::string ControllerManager::serialDevice()const{std::lock_guard lk(mu_);return serial_device_;}
 void ControllerManager::setRawEventCallback(RawEventFn fn){std::lock_guard lk(mu_);raw_cb_=std::move(fn);}
@@ -197,8 +198,18 @@ std::optional<ControllerUserUploadJob> ControllerManager::userUploadJob(std::uin
 std::uint64_t ControllerManager::queueDisablePassAnyCards(int controller_node){
     std::lock_guard lk(action_mu_);
     const auto id=next_action_id_++;
-    ControllerActionJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.controller_node=controller_node;
-    action_queue_.push_back(PendingControllerAction{id,controller_node});
+    ControllerActionJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.action="disable_pass_any";job.controller_node=controller_node;
+    action_queue_.push_back(PendingControllerAction{id,"disable_pass_any",controller_node,0});
+    action_jobs_[id]=std::move(job);
+    while(action_jobs_.size()>20)action_jobs_.erase(action_jobs_.begin());
+    return id;
+}
+
+std::uint64_t ControllerManager::queueSetNodeId(int controller_node,int new_controller_node){
+    std::lock_guard lk(action_mu_);
+    const auto id=next_action_id_++;
+    ControllerActionJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.action="set_node_id";job.controller_node=controller_node;job.new_controller_node=new_controller_node;
+    action_queue_.push_back(PendingControllerAction{id,"set_node_id",controller_node,new_controller_node});
     action_jobs_[id]=std::move(job);
     while(action_jobs_.size()>20)action_jobs_.erase(action_jobs_.begin());
     return id;
@@ -558,15 +569,53 @@ void ControllerManager::processOneControllerAction(Unex721Protocol& proto){
         auto it=action_jobs_.find(pending.id);if(it!=action_jobs_.end())it->second.state="running";
     }
 
-    auto out=proto.disablePassAnyCards(static_cast<std::uint8_t>(pending.controller_node));
+    bool ok=false;std::string status,message;
+    if(pending.action=="set_node_id"){
+        bool conflict=false;
+        {
+            std::lock_guard lk(mu_);
+            conflict=std::any_of(controllers_.begin(),controllers_.end(),[&](const Controller&c){return c.node==pending.new_controller_node&&c.node!=pending.controller_node;});
+        }
+        if(pending.new_controller_node<1||pending.new_controller_node>254){
+            status="invalid_node";message="Node ID должен быть в диапазоне 1..254";
+        }else if(conflict){
+            status="node_conflict";message="Node ID "+std::to_string(pending.new_controller_node)+" уже используется другим контроллером";
+        }else{
+            auto out=proto.setNodeId(static_cast<std::uint8_t>(pending.controller_node),static_cast<std::uint8_t>(pending.new_controller_node));
+            ok=out.ok;status=out.status;message=out.message;
+            if(ok){
+                {
+                    std::lock_guard lk(mu_);
+                    for(auto&c:controllers_)if(c.node==pending.controller_node){
+                        c.node=pending.new_controller_node;
+                        c.reported_node=pending.new_controller_node;
+                        c.online=true;
+                        c.last_seen=util::nowLocal();
+                        c.id_status="ID подтверждён 24H после 80H";
+                        break;
+                    }
+                }
+                if(!saveControllers()){
+                    ok=false;status="local_save_failed";
+                    message+="; ВНИМАНИЕ: физический ID изменён, но локальную конфигурацию сохранить не удалось";
+                }else{
+                    refresh_requested_=true;
+                }
+            }
+        }
+    }else{
+        auto out=proto.disablePassAnyCards(static_cast<std::uint8_t>(pending.controller_node));
+        ok=out.ok;status=out.status;message=out.message;
+    }
+
     {
         std::lock_guard lk(action_mu_);
         auto it=action_jobs_.find(pending.id);
         if(it!=action_jobs_.end()){
             it->second.state="completed";
-            it->second.ok=out.ok;
-            it->second.status=out.status;
-            it->second.message=out.message;
+            it->second.ok=ok;
+            it->second.status=status;
+            it->second.message=message;
         }
     }
 }
@@ -617,27 +666,93 @@ void ControllerManager::processOneUserDelete(Unex721Protocol& proto){
     if(it!=delete_jobs_.end())it->second.state="completed";
 }
 void ControllerManager::loop(){
-    using namespace std::chrono_literals; SerialPort port; std::map<int,std::chrono::steady_clock::time_point> last_sync;
+    using namespace std::chrono_literals;
+    SerialPort port;
+    std::map<int,std::chrono::steady_clock::time_point> next_time_sync;
+    std::map<int,std::chrono::steady_clock::time_point> next_id_probe;
     while(running_){
-        if(!cfg_.getBool("serial.enabled",true)){{std::lock_guard lk(mu_);serial_status_="DISABLED";}std::this_thread::sleep_for(1s);continue;}
+        if(!cfg_.getBool("serial.enabled",true)){
+            {std::lock_guard lk(mu_);serial_status_="DISABLED";}
+            std::this_thread::sleep_for(1s);continue;
+        }
         if(!port.isOpen()){
             auto dev=cfg_.get("serial.device","auto");if(dev=="auto")dev=SerialPort::autoDetect();
-            if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){ {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;} std::this_thread::sleep_for(2s);continue; }
+            if(dev.empty()||!port.openPort(dev,cfg_.getInt("serial.baudrate",9600))){
+                {std::lock_guard lk(mu_);serial_status_="OFFLINE";serial_device_=dev;for(auto&c:controllers_)c.online=false;}
+                std::this_thread::sleep_for(2s);continue;
+            }
             {std::lock_guard lk(mu_);serial_status_="ONLINE";serial_device_=dev;}
+            refresh_requested_=true;
         }
-        Unex721Protocol proto(port,[this](const std::string&direction,int node,int command,const std::string&protocol,const std::vector<std::uint8_t>&frame,const std::string&message){appendProtocolTrace(direction,node,command,protocol,frame,message);}); processEepromSearchBatch(proto); processUserReadBatch(proto); processOneControllerAction(proto); processOneUserDelete(proto); processOneUserUpload(proto); std::vector<int> nodes; {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+
+        Unex721Protocol proto(port,[this](const std::string&direction,int node,int command,const std::string&protocol,const std::vector<std::uint8_t>&frame,const std::string&message){appendProtocolTrace(direction,node,command,protocol,frame,message);});
+        processEepromSearchBatch(proto);
+        processUserReadBatch(proto);
+        processOneControllerAction(proto);
+        processOneUserDelete(proto);
+        processOneUserUpload(proto);
+
+        std::vector<int> nodes;
+        {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
         if(nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
-            for(int n=from;n<=to&&running_;++n)if(proto.ping((std::uint8_t)n)){
-                std::lock_guard lk(mu_);if(std::none_of(controllers_.begin(),controllers_.end(),[&](auto&c){return c.node==n;})){Controller c;c.node=n;c.name="UNEX 721 #"+std::to_string(n);c.online=true;c.last_seen=util::nowLocal();controllers_.push_back(c);}
+            for(int n=from;n<=to&&running_;++n){
+                auto probe=proto.readNodeId(static_cast<std::uint8_t>(n));
+                if(!probe.ok)continue;
+                const int physical=probe.reported_node;
+                std::lock_guard lk(mu_);
+                if(std::none_of(controllers_.begin(),controllers_.end(),[&](auto&c){return c.node==physical;})){
+                    Controller c;c.node=physical;c.reported_node=physical;c.name="UNEX 721 #"+std::to_string(physical);c.online=true;c.last_seen=util::nowLocal();c.last_raw_hex=probe.raw_frame_hex;c.id_status="ID считан 24H";controllers_.push_back(c);
+                }
             }
-            saveControllers(); std::this_thread::sleep_for(300ms); continue;
+            saveControllers();
+            std::this_thread::sleep_for(300ms);continue;
         }
-        for(int node:nodes){ if(!running_)break;
-            if(cfg_.getBool("time_sync.enabled",true)){auto now=std::chrono::steady_clock::now();auto it=last_sync.find(node);auto mins=cfg_.getInt("time_sync.interval_minutes",60);if(it==last_sync.end()||now-it->second>std::chrono::minutes(mins)){if(proto.setSystemTime((std::uint8_t)node))last_sync[node]=now;}}
-            auto evt=proto.getOldestEvent((std::uint8_t)node); bool online=port.isOpen();
-            RawEventFn cb; std::string cname;
-            {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.node==node){c.online=online;if(online)c.last_seen=util::nowLocal();if(evt)c.last_raw_hex=evt->raw_hex;cname=c.name;}cb=raw_cb_;}
+
+        const bool force_refresh=refresh_requested_.exchange(false);
+        for(int node:nodes){
+            if(!running_)break;
+            const auto now=std::chrono::steady_clock::now();
+            bool probe_attempted=false,probe_ok=false;
+            auto pit=next_id_probe.find(node);
+            if(force_refresh||pit==next_id_probe.end()||now>=pit->second){
+                probe_attempted=true;
+                auto probe=proto.readNodeId(static_cast<std::uint8_t>(node));
+                probe_ok=probe.ok;
+                {
+                    std::lock_guard lk(mu_);
+                    for(auto&c:controllers_)if(c.node==node){
+                        if(probe.ok){
+                            c.reported_node=probe.reported_node;
+                            c.online=true;
+                            c.last_seen=util::nowLocal();
+                            c.last_raw_hex=probe.raw_frame_hex;
+                            c.id_status=(probe.reported_node==node)
+                                ? "ID подтверждён 24H"
+                                : ("Несовпадение: настроен "+std::to_string(node)+", контроллер сообщил "+std::to_string(probe.reported_node));
+                        }else{
+                            c.online=false;
+                            c.id_status=probe.message;
+                        }
+                    }
+                }
+                next_id_probe[node]=now+30s;
+            }
+
+            // Poll events first: a failed clock synchronization must never starve 25H.
+            bool responded=false;
+            auto evt=proto.getOldestEvent(static_cast<std::uint8_t>(node),&responded);
+            RawEventFn cb;std::string cname;
+            {
+                std::lock_guard lk(mu_);
+                for(auto&c:controllers_)if(c.node==node){
+                    if(responded){c.online=true;c.last_seen=util::nowLocal();}
+                    else if(probe_attempted&&!probe_ok)c.online=false;
+                    if(evt)c.last_raw_hex=evt->raw_hex;
+                    cname=c.name;
+                }
+                cb=raw_cb_;
+            }
             if(evt){
                 bool log_semantic=false;{std::lock_guard lk(trace_mu_);if(last_event_trace_raw_!=evt->raw_hex){last_event_trace_raw_=evt->raw_hex;log_semantic=true;}}
                 if(log_semantic){
@@ -650,8 +765,6 @@ void ControllerManager::loop(){
                 }
                 if(cb)cb(*evt);
 
-                // Every decoded physical card is useful for onboarding, including an
-                // invalid card.  Attendance, however, changes only on 0BH Normal Access.
                 if(!evt->card.empty()){
                     rememberControllerCard(evt->card,node,cname,evt->raw_hex);
                     if(cfg_.getBool("cards.auto_create_unknown",false)&&!users_.byCard(evt->card)){
@@ -669,8 +782,6 @@ void ControllerManager::loop(){
                     processed=attendance_.recordControllerRawEvent(node,cname,evt->raw_hex,evt->event_timestamp,evt->card);
 
                 if(!processed.stored){
-                    // Do NOT acknowledge/remove a FIFO record before durable storage.
-                    // Leaving it as the oldest event makes the controller retry it later.
                     appendProtocolTrace("INFO",node,0x25,"semantic",{},"Событие НЕ удалено из FIFO: не удалось сохранить его в локальное хранилище",evt->card,evt->user_address);
                     std::this_thread::sleep_for(300ms);
                     continue;
@@ -678,18 +789,36 @@ void ControllerManager::loop(){
                 if(processed.duplicate&&log_semantic)
                     appendProtocolTrace("INFO",node,0x25,"semantic",{},"Повтор уже сохранённого FIFO-события: состояние посещаемости повторно не изменялось",evt->card,evt->user_address);
 
-                // 25H always returns the oldest FIFO record. Remove it only after the
-                // event is durably stored (or proven to be an already stored duplicate).
-                const bool removed=proto.removeOldestEvent((std::uint8_t)node);
+                const bool removed=proto.removeOldestEvent(static_cast<std::uint8_t>(node));
                 if(log_semantic){
                     appendProtocolTrace("INFO",node,0x37,"semantic",{},
                         removed?(processed.duplicate?"Дубликат уже был в БД; событие удалено из FIFO":"Событие сохранено с временем контроллера и удалено из FIFO")
                                :"Не удалось удалить старейшее событие из FIFO; оно будет прочитано повторно");
                 }
             }
+
+            // Clock synchronization has independent backoff. On error we retry once
+            // after 60 seconds (configurable), not every poll cycle. Standard 0x7E only.
+            if(cfg_.getBool("time_sync.enabled",true)){
+                auto sit=next_time_sync.find(node);
+                if(sit==next_time_sync.end()||now>=sit->second){
+                    const bool synced=proto.setSystemTime(static_cast<std::uint8_t>(node));
+                    if(synced){
+                        const int mins=std::max(1,cfg_.getInt("time_sync.interval_minutes",60));
+                        next_time_sync[node]=std::chrono::steady_clock::now()+std::chrono::minutes(mins);
+                        appendProtocolTrace("INFO",node,0x23,"semantic",{},"Время контроллера синхронизировано; следующая попытка через "+std::to_string(mins)+" мин");
+                    }else{
+                        const int retry=std::max(5,cfg_.getInt("time_sync.retry_seconds",60));
+                        next_time_sync[node]=std::chrono::steady_clock::now()+std::chrono::seconds(retry);
+                        appendProtocolTrace("INFO",node,0x23,"semantic",{},"23H не подтверждён; повтор через "+std::to_string(retry)+" сек. Опрос 25H продолжается");
+                    }
+                }
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.getInt("controllers.poll_interval_ms",200)));
         }
     }
-    port.closePort(); {std::lock_guard lk(mu_);serial_status_="OFFLINE";}
+    port.closePort();
+    {std::lock_guard lk(mu_);serial_status_="OFFLINE";for(auto&c:controllers_)c.online=false;}
 }
 }

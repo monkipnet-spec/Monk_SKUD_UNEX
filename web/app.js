@@ -146,13 +146,49 @@ async function clearControllerCardCatalog(){
     if(!confirm('Очистить только каталог считанных карт? Пользователи, их карты и журнал посещаемости останутся без изменений.'))return;
     const r=await api('/api/cards/controller/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось очистить каталог');await loadCards();
 }
-async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Контроллеры ещё не обнаружены</td></tr>';return CONTROLLERS;}
+async function loadControllers(){
+    CONTROLLERS=await (await api('/api/controllers')).json();
+    if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>{
+        const reported=Number(c.reported_node)>0?Number(c.reported_node):null;
+        const idClass=reported===null?'muted':(reported===Number(c.node)?'ok':'bad');
+        const idText=reported===null?'—':String(reported);
+        return `<tr><td><b>${c.node}</b></td><td class="${idClass}"><b>${idText}</b><small class="table-subtext">${esc(c.id_status||'ID ещё не считан')}</small></td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><div class="controller-id-action"><input id="controllerNewNode-${c.node}" type="number" min="1" max="254" value="${c.node}" title="Новый Node ID"><button class="mini" onclick="setControllerNodeId(${c.node})">Изменить ID</button></div><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`;
+    }).join(''):'<tr><td colspan="8" class="muted">Контроллеры ещё не обнаружены</td></tr>';
+    return CONTROLLERS;
+}
 async function refreshControllers(){
     const b=window.refreshControllersButton,m=window.controllersRefreshStatus;
-    if(b)b.disabled=true;if(m)m.textContent='Обновление...';
-    try{await loadControllers();if(m)m.textContent='Обновлено: '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
-    catch(e){if(m)m.textContent='Ошибка обновления';}
+    if(b)b.disabled=true;if(m)m.textContent='24H: чтение ID контроллеров...';
+    try{
+        await api('/api/controllers/refresh',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});
+        await new Promise(resolve=>setTimeout(resolve,Math.max(700,450+(CONTROLLERS.length||1)*250)));
+        await loadControllers();
+        if(m)m.textContent='Обновлено с контроллеров: '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    }catch(e){if(m)m.textContent='Ошибка обновления';}
     finally{if(b)b.disabled=false;}
+}
+
+async function setControllerNodeId(node){
+    const input=document.getElementById('controllerNewNode-'+node);const newNode=Number(input&&input.value);
+    if(!Number.isInteger(newNode)||newNode<1||newNode>254)return alert('Новый Node ID должен быть от 1 до 254');
+    if(newNode===Number(node))return alert('Новый Node ID совпадает с текущим');
+    const c=CONTROLLERS.find(x=>Number(x.node)===Number(node));const name=c?controllerDisplayName(c):('UNEX 721 #'+node);
+    if(!confirm(`Контроллер ${node} — ${name}: изменить физический Node ID на ${newNode}?\n\nБудет выполнено: 24H проверка текущего ID → 80H Set Node ID → ACK с новым Reader ID → 24H проверка нового ID.\n\nНе отключайте питание во время операции.`))return;
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary muted';controllerActionResult.textContent=`Node ${node}: проверка ID и изменение на ${newNode}...`;}
+    const r=await api('/api/controllers/set-node-id',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({controller_node:node,new_controller_node:newNode})});
+    let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent='Ошибка: '+(j.error||'не удалось запустить изменение ID');}return;}
+    for(let i=0;i<120;i++){
+        await new Promise(resolve=>setTimeout(resolve,250));
+        const sr=await api('/api/controllers/set-node-id/status?job_id='+encodeURIComponent(j.job_id));let st={};try{st=await sr.json();}catch{}
+        if(!sr.ok)continue;
+        if(st.state==='completed'){
+            if(window.controllerActionResult){controllerActionResult.className='upload-summary '+(st.ok?'ok':'bad');controllerActionResult.innerHTML=`<b>Node ${node} → ${newNode}: ${st.ok?'готово':'ошибка'}</b><br>${esc(st.message||st.status||'')}`;}
+            await loadControllers();return;
+        }
+        if(window.controllerActionResult)controllerActionResult.textContent=`Node ${node} → ${newNode}: ${st.state==='running'?'24H → 80H → ACK → 24H...':'в очереди COM-порта...'}`;
+    }
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent=`Node ${node}: тайм-аут изменения ID. Проверьте LIVE протокол.`;}
 }
 
 async function disablePassAnyCards(node){
@@ -790,7 +826,7 @@ async function importSettings(file){if(!file)return;let text=await file.text();l
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}
 
-function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',37:'25H Get Event',55:'37H Delete Event',131:'83H Set User Data',132:'84H Stop Waiting',135:'87H Get User Data'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
+function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',36:'24H Read RTC',37:'25H Get Event',55:'37H Delete Event',128:'80H Set Node ID',131:'83H Set User Data',132:'84H Stop Waiting',135:'87H Get User Data'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}
 function protocolDirectionLabel(d){return ({TX:'TX →',RX:'← RX',EVENT:'CARD/EVENT',INFO:'INFO'})[d]||d;}
 function protocolVisibleEntries(){const showPoll=window.protocolShowPoll&&protocolShowPoll.checked;const node=window.protocolNodeFilter?Number(protocolNodeFilter.value):0;return PROTOCOL_ENTRIES.filter(e=>(!node||e.node===node)&&(showPoll||e.command!==0x25||e.direction==='EVENT'));}
 function renderProtocolLive(){

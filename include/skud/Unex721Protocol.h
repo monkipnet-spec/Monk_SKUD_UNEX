@@ -29,6 +29,20 @@ public:
         std::string raw_frame_hex;
         std::string message;
     };
+    struct NodeProbeOutcome {
+        bool ok{false};
+        int requested_node{};
+        int reported_node{-1};
+        std::string raw_frame_hex;
+        std::string message;
+    };
+    struct NodeIdChangeOutcome {
+        bool ok{false};
+        int old_node{};
+        int new_node{};
+        std::string status;
+        std::string message;
+    };
     struct UserReadOutcome {
         bool ok{false};
         bool present{false};
@@ -58,7 +72,9 @@ public:
     static bool validExtendedFrame(const std::vector<std::uint8_t>&f);
 
     bool ping(std::uint8_t node);
-    std::optional<RawUnexEvent> getOldestEvent(std::uint8_t node);
+    NodeProbeOutcome readNodeId(std::uint8_t node);
+    NodeIdChangeOutcome setNodeId(std::uint8_t current_node,std::uint8_t new_node);
+    std::optional<RawUnexEvent> getOldestEvent(std::uint8_t node,bool* responded=nullptr);
     bool removeOldestEvent(std::uint8_t node);
     bool setSystemTime(std::uint8_t node);
 

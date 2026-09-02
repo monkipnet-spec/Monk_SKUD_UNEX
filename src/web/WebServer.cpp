@@ -121,7 +121,7 @@ WebServer::Res WebServer::jsonTodayAttendance(){
     o<<"]";
     return{200,"application/json; charset=utf-8",o.str()};
 }
-WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonControllers(){auto v=controllers_.controllers();std::ostringstream o;o<<"[";bool first=true;for(auto&c:v){if(!first)o<<',';first=false;o<<"{\"node\":"<<c.node<<",\"reported_node\":"<<c.reported_node<<",\"name\":\""<<util::jsonEscape(c.name)<<"\",\"model\":\""<<util::jsonEscape(c.model)<<"\",\"online\":"<<(c.online?"true":"false")<<",\"last_seen\":\""<<c.last_seen<<"\",\"last_raw_hex\":\""<<util::jsonEscape(c.last_raw_hex)<<"\",\"id_status\":\""<<util::jsonEscape(c.id_status)<<"\"}";}o<<"]";return{200,"application/json; charset=utf-8",o.str()};}
 WebServer::Res WebServer::jsonUserUploadJob(const ControllerUserUploadJob&job){
     std::ostringstream o;o<<"{\"id\":"<<job.id<<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\",\"state\":\""<<util::jsonEscape(job.state)<<"\",\"total\":"<<job.total<<",\"completed\":"<<job.completed<<",\"success\":"<<job.success<<",\"failed\":"<<job.failed<<",\"skipped\":"<<job.skipped<<",\"full_sync\":"<<(job.full_sync?"true":"false")<<",\"results\":[";
     bool first=true;for(const auto&r:job.results){if(!first)o<<',';first=false;o<<"{\"user_id\":"<<r.user_id<<",\"controller_node\":"<<r.controller_node<<",\"status\":\""<<util::jsonEscape(r.status)<<"\",\"message\":\""<<util::jsonEscape(r.message)<<"\"}";}o<<"]}";
@@ -132,7 +132,9 @@ WebServer::Res WebServer::jsonControllerActionJob(const ControllerActionJob&job)
     o<<"{\"id\":"<<job.id
      <<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\""
      <<",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"action\":\""<<util::jsonEscape(job.action)<<"\""
      <<",\"controller_node\":"<<job.controller_node
+     <<",\"new_controller_node\":"<<job.new_controller_node
      <<",\"ok\":"<<(job.ok?"true":"false")
      <<",\"status\":\""<<util::jsonEscape(job.status)<<"\""
      <<",\"message\":\""<<util::jsonEscape(job.message)<<"\"}";
@@ -276,6 +278,16 @@ WebServer::Res WebServer::route(const Req&r){
         return{ok?200:400,"application/json; charset=utf-8",o.str()};
     }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
+    if(r.path=="/api/controllers/refresh"&&r.method=="POST"){controllers_.requestControllerRefresh();return{200,"application/json","{\"ok\":true}"};}
+    if(r.path=="/api/controllers/set-node-id"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);int node=0,new_node=0;try{node=std::stoi(f["controller_node"]);new_node=std::stoi(f["new_controller_node"]);}catch(...){return{400,"application/json","{\"ok\":false,\"error\":\"invalid node id\"}"};}
+        if(node<1||node>254||new_node<1||new_node>254)return{400,"application/json","{\"ok\":false,\"error\":\"Node ID must be 1..254\"}"};
+        auto allc=controllers_.controllers();auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+        if(it==allc.end())return{400,"application/json","{\"ok\":false,\"error\":\"controller not found or disabled\"}"};
+        if(std::any_of(allc.begin(),allc.end(),[&](const Controller&c){return c.node==new_node&&c.node!=node;}))return{409,"application/json","{\"ok\":false,\"error\":\"new Node ID already exists\"}"};
+        auto id=controllers_.queueSetNodeId(node,new_node);std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"controller_node\":"<<node<<",\"new_controller_node\":"<<new_node<<"}";return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/controllers/set-node-id/status"&&r.method=="GET"){auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}auto job=controllers_.controllerActionJob(id);if(!job)return{404,"application/json","{\"error\":\"controller action job not found\"}"};return jsonControllerActionJob(*job);}
     if(r.path=="/api/protocol/live"&&r.method=="GET"){auto q=util::parseForm(r.query);std::uint64_t after=0;std::size_t limit=250;try{if(!q["after"].empty())after=std::stoull(q["after"]);if(!q["limit"].empty())limit=static_cast<std::size_t>(std::stoul(q["limit"]));}catch(...){}return jsonProtocolTrace(after,limit);}
     if(r.path=="/api/protocol/live/clear"&&r.method=="POST"){controllers_.clearProtocolTrace();return{200,"application/json","{\"ok\":true}"};}
     if(r.path=="/api/controllers/eeprom-search"&&r.method=="POST"){

@@ -25,6 +25,7 @@ public:
     void stop();
     std::vector<Controller> controllers() const;
     bool renameController(int node,const std::string&name);
+    void requestControllerRefresh();
     std::string serialStatus() const;
     std::string serialDevice() const;
     void setRawEventCallback(RawEventFn fn);
@@ -44,6 +45,7 @@ public:
     // COM-port worker. This disables only H-series Pass Any Cards (24* bit 0x20)
     // and performs 12H -> 20H -> 12H verified read-back.
     std::uint64_t queueDisablePassAnyCards(int controller_node);
+    std::uint64_t queueSetNodeId(int controller_node,int new_controller_node);
     std::optional<ControllerActionJob> controllerActionJob(std::uint64_t id) const;
 
     // User deletions use the same serial queue. When delete_from_system=true,
@@ -81,7 +83,9 @@ private:
     };
     struct PendingControllerAction {
         std::uint64_t id{};
+        std::string action;
         int controller_node{};
+        int new_controller_node{};
     };
     struct PendingEepromSearch {
         std::uint64_t id{};
@@ -126,7 +130,9 @@ private:
     mutable std::mutex storage_mu_;
     mutable std::string storage_error_;
     mutable std::mutex mu_; std::vector<Controller> controllers_; std::string serial_status_{"OFFLINE"}; std::string serial_device_;
-    std::atomic<bool> running_{false}; std::thread thread_; RawEventFn raw_cb_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> refresh_requested_{false};
+    std::thread thread_; RawEventFn raw_cb_;
 
     mutable std::mutex upload_mu_;
     std::deque<PendingUserUpload> upload_queue_;

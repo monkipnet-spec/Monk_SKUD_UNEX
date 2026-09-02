@@ -31,13 +31,15 @@ struct User {
 };
 
 struct Controller {
-    int node{};
+    int node{}; // locally configured destination node
+    int reported_node{-1}; // Source/Reader ID read back from the physical controller
     std::string name;
     std::string model{"UNEX 721"};
     bool enabled{true};
     bool online{false};
     std::string last_seen;
     std::string last_raw_hex;
+    std::string id_status;
 };
 
 struct PersistedCardState { PresenceState state{PresenceState::Absent}; std::string last_read; };
@@ -114,7 +116,9 @@ struct ControllerActionJob {
     std::uint64_t id{};
     std::string created_at;
     std::string state; // queued, running, completed
+    std::string action; // disable_pass_any, set_node_id
     int controller_node{};
+    int new_controller_node{};
     bool ok{false};
     std::string status;
     std::string message;

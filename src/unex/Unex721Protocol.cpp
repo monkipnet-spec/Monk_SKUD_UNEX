@@ -134,39 +134,96 @@ std::optional<std::vector<std::uint8_t>> Unex721Protocol::transactExtended(std::
 }
 
 bool Unex721Protocol::ping(std::uint8_t node){
-    // Real UNEX 721 hardware is confirmed to answer standard 0x7E packets.
-    // Avoid an Extended timeout on every availability check.
-    if(transact(node,0x25,{},100))return true;
-    return transactExtended(node,0x18,{},120).has_value();
+    return readNodeId(node).ok;
 }
 
-std::optional<RawUnexEvent> Unex721Protocol::getOldestEvent(std::uint8_t node){
-    // The real UNEX 721 answers 25H through the standard 0x7E protocol and
-    // ignores Extended frames. Use the proven path first so every poll does
-    // not waste ~180 ms waiting for an Extended timeout.
-    if(auto r=transact(node,0x25,{},120)){
-        if(r->size()<18)return std::nullopt; // short ACK/no-event response
-        return decodeEvent(node,*r);
+Unex721Protocol::NodeProbeOutcome Unex721Protocol::readNodeId(std::uint8_t node){
+    NodeProbeOutcome out;out.requested_node=node;
+    // Use 24H Read Device RTC as a harmless identity probe. Its standard reply
+    // contains Reader ID at byte 4: 7E LEN 00 03 ReaderID SS MM HH ... XOR SUM.
+    // Do NOT use 18H for periodic probing: according to the H-series manual,
+    // 18H can place the reader into networking mode and affect access handling.
+    auto r=transact(node,0x24,{},180);
+    if(!r){out.message="Нет ответа на 24H Read RTC";return out;}
+    out.raw_frame_hex=util::hex(*r);
+    if(r->size()<10){out.message="Короткий ответ 24H: "+out.raw_frame_hex;return out;}
+    if((*r)[2]!=0x00||(*r)[3]!=0x03){
+        std::ostringstream m;m<<"Неожиданный ответ 24H function=0x"<<std::hex<<std::uppercase<<static_cast<int>((*r)[3])<<": "<<out.raw_frame_hex;
+        out.message=m.str();return out;
     }
-    if(auto r=transactExtended(node,0x25,{},180)){
-        if(r->size()>=8&&(*r)[7]==ACK)return std::nullopt;
-        if(r->size()>=30)return decodeExtendedEvent(node,*r);
+    out.reported_node=(*r)[4];
+    if(out.reported_node<1||out.reported_node>254){out.message="24H вернул недопустимый Reader ID "+std::to_string(out.reported_node);return out;}
+    out.ok=true;
+    out.message="24H подтвердил физический Node ID "+std::to_string(out.reported_node);
+    return out;
+}
+
+Unex721Protocol::NodeIdChangeOutcome Unex721Protocol::setNodeId(std::uint8_t current_node,std::uint8_t new_node){
+    NodeIdChangeOutcome out;out.old_node=current_node;out.new_node=new_node;
+    if(current_node<1||current_node>254||new_node<1||new_node>254){
+        out.status="invalid_node";out.message="Node ID должен быть в диапазоне 1..254";return out;
+    }
+    auto before=readNodeId(current_node);
+    if(!before.ok){out.status="precheck_failed";out.message="80H не отправлен: "+before.message;return out;}
+    if(before.reported_node!=current_node){
+        out.status="id_mismatch";
+        out.message="80H не отправлен: по адресу "+std::to_string(current_node)+" контроллер сообщил Source ID "+std::to_string(before.reported_node);
+        return out;
+    }
+    if(current_node==new_node){out.ok=true;out.status="unchanged";out.message="Node ID уже равен "+std::to_string(new_node)+", запись не требуется";return out;}
+
+    // Protocol v1.2, 80H basic form: Destination, 80H, New ID, XOR, SUM.
+    // The ACK itself is sent with Reader ID equal to the NEW node.
+    auto ack=transact(current_node,0x80,{new_node},500);
+    if(!ack){out.status="write_timeout";out.message="Нет ответа на 80H Set Node ID";return out;}
+    if(ack->size()<7){out.status="write_error";out.message="Короткий ответ 80H: "+util::hex(*ack);return out;}
+    if((*ack)[3]==NACK){out.status="write_nack";out.message="Контроллер вернул NACK на 80H: "+util::hex(*ack);return out;}
+    if((*ack)[3]!=ACK){out.status="write_error";out.message="Неожиданный ответ 80H: "+util::hex(*ack);return out;}
+    if((*ack)[4]!=new_node){
+        out.status="ack_id_mismatch";
+        out.message="80H ACK получен, но Reader ID="+std::to_string((*ack)[4])+", ожидался "+std::to_string(new_node)+": "+util::hex(*ack);
+        return out;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    auto after=readNodeId(new_node);
+    if(!after.ok||after.reported_node!=new_node){
+        out.status="verify_failed";
+        out.message="80H ACK получен, но новый Node ID не подтверждён 24H по адресу "+std::to_string(new_node)+(after.message.empty()?std::string{}:(": "+after.message));
+        return out;
+    }
+    out.ok=true;out.status="node_id_changed";
+    out.message="Node ID изменён "+std::to_string(current_node)+" -> "+std::to_string(new_node)+"; ACK Reader ID и контрольный 24H подтверждены";
+    trace("INFO",new_node,0x80,"semantic",{},out.message);
+    return out;
+}
+
+std::optional<RawUnexEvent> Unex721Protocol::getOldestEvent(std::uint8_t node,bool* responded){
+    if(responded)*responded=false;
+    // The real UNEX 721 answers 25H through the standard 0x7E protocol.
+    if(auto r=transact(node,0x25,{},120)){
+        if(responded)*responded=true;
+        if(r->size()<18)return std::nullopt; // valid short reply/no event
+        return decodeEvent(node,*r);
     }
     return std::nullopt;
 }
 
 bool Unex721Protocol::removeOldestEvent(std::uint8_t node){
     // Same as 25H: standard 0x7E is the confirmed UNEX 721 transport.
-    if(auto r=transact(node,0x37,{},120))return true;
-    if(auto r=transactExtended(node,0x37,{},180))return r->size()>=8&&(*r)[7]!=NACK;
+    if(auto r=transact(node,0x37,{},120))return r->size()>=6&&(*r)[3]!=NACK;
     return false;
 }
 
 bool Unex721Protocol::setSystemTime(std::uint8_t node){
-    std::time_t t=std::time(nullptr);std::tm tm{};localtime_r(&t,&tm);std::vector<std::uint8_t>d={static_cast<std::uint8_t>(tm.tm_sec),static_cast<std::uint8_t>(tm.tm_min),static_cast<std::uint8_t>(tm.tm_hour),static_cast<std::uint8_t>(tm.tm_wday+1),static_cast<std::uint8_t>(tm.tm_mday),static_cast<std::uint8_t>(tm.tm_mon+1),static_cast<std::uint8_t>((tm.tm_year+1900)%100)};
-    if(auto r=transact(node,0x23,d,180))return r->size()>=4&&(*r)[3]!=NACK;
-    if(auto r=transactExtended(node,0x23,d,180))return r->size()>=8&&(*r)[7]!=NACK;
-    return false;
+    std::time_t t=std::time(nullptr);std::tm tm{};localtime_r(&t,&tm);
+    std::vector<std::uint8_t>d={static_cast<std::uint8_t>(tm.tm_sec),static_cast<std::uint8_t>(tm.tm_min),static_cast<std::uint8_t>(tm.tm_hour),static_cast<std::uint8_t>(tm.tm_wday+1),static_cast<std::uint8_t>(tm.tm_mday),static_cast<std::uint8_t>(tm.tm_mon+1),static_cast<std::uint8_t>((tm.tm_year+1900)%100)};
+    // Real UNEX 721 hardware is confirmed to support standard 0x7E 23H.
+    // Do not fall back to Extended on every timeout: that previously created
+    // a tight 23H/Extended loop and starved normal 25H event polling.
+    auto r=transact(node,0x23,d,180);
+    if(!r||r->size()<7)return false;
+    return (*r)[3]==ACK&&(*r)[4]==node;
 }
 
 bool Unex721Protocol::userWriteSupported(){return true;}

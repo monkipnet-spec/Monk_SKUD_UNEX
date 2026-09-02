@@ -84,3 +84,15 @@ v0.3.22 checks:
 - web/app.js syntax: PASS
 - Settings submenu DOM/actions: PASS
 - Controllers "Обновить" action: PASS
+
+v0.3.23 checks:
+- Release CMake build: PASS
+- web/app.js syntax: PASS
+- 23H runaway regression PTY test: PASS; failed 23H count=1 during 3.2 s while 25H continued 31 times
+- 23H Extended fallback: removed for UNEX 721 standard path
+- Controller online state: based on valid controller response, not merely open serial device
+- Controller ID probe: 24H Read RTC Reader ID parsing: PASS
+- Node ID change PTY test: 24H node2 -> 80H 2->3 -> ACK ReaderID3 -> 24H node3: PASS
+- Exact generated frames: 24H node2 `7E 04 02 24 D9 FF`; 80H 2->3 `7E 05 02 80 03 7E 03`; 24H node3 `7E 04 03 24 D8 FF`
+- Controllers refresh button: POST hardware refresh + cached status reload
+- Web cache revision: v=0323

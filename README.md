@@ -550,3 +550,14 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - Controller and protocol views no longer render as one long Settings page.
 - Live polling runs only while the **LIVE протокол** submenu is open.
 - The **Контроллеры** submenu has an explicit **Обновить** button that reloads current controller status, last response and RAW data from `/api/controllers`.
+
+## v0.3.23 — controller ID read/change + serial polling fix
+
+- Fixed the runaway `23H Set Time` loop. A failed clock sync now backs off for `time_sync.retry_seconds` (default 60 s); a successful sync uses `time_sync.interval_minutes` (default 60 min). `25H Get Event` polling continues independently and is executed before clock synchronization.
+- Removed the Extended fallback from `23H` for the real UNEX 721 path. The proven standard `0x7E` transport is used once per scheduled attempt.
+- Controller `ONLINE/OFFLINE` is no longer derived from the fact that the USB-COM port is open. A valid controller response is required.
+- The Controllers **Обновить** button now requests an actual hardware probe instead of merely reloading cached `/api/controllers` JSON.
+- Physical controller ID is read with `24H Read Device RTC`: the H-series response includes `Reader ID`. `18H` is deliberately not used as a periodic identity probe because the manual states that `18H` participates in networking-mode behavior.
+- The Controllers table shows both the locally configured Node and the physical `Reader ID` returned by `24H`, including an explicit mismatch warning.
+- Added **Изменить ID**. It uses official `80H Set Node ID`, validates range `1..254` and duplicate IDs, requires the ACK to contain the new Reader ID, then probes the new address with `24H` and only after that updates/persists the local controller configuration.
+- Live protocol names now include `24H Read RTC` and `80H Set Node ID`.

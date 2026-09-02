@@ -10,6 +10,7 @@ cards.auto_create_unknown=false
 attendance.accidental_repeat_seconds=5
 time_sync.enabled=true
 time_sync.interval_minutes=60
+time_sync.retry_seconds=60
 telegram.enabled=false
 telegram.bot_token=
 telegram.chat_id=
