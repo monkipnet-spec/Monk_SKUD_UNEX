@@ -152,7 +152,7 @@ async function loadControllers(){
         const reported=Number(c.reported_node)>0?Number(c.reported_node):null;
         const idClass=reported===null?'muted':(reported===Number(c.node)?'ok':'bad');
         const idText=reported===null?'—':String(reported);
-        return `<tr><td><b>${c.node}</b></td><td class="${idClass}"><b>${idText}</b><small class="table-subtext">${esc(c.id_status||'ID ещё не считан')}</small></td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><div class="controller-id-action"><input id="controllerNewNode-${c.node}" type="number" min="1" max="254" value="${c.node}" title="Новый Node ID"><button class="mini" onclick="setControllerNodeId(${c.node})">Изменить ID</button></div><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`;
+        return `<tr><td><b>${c.node}</b></td><td class="${idClass}"><b>${idText}</b><small class="table-subtext">${esc(c.id_status||'ID ещё не считан')}</small></td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><button class="mini primary" onclick="readControllerAttendance(${c.node})">Вычитать посещаемость</button><div class="controller-id-action"><input id="controllerNewNode-${c.node}" type="number" min="1" max="254" value="${c.node}" title="Новый Node ID"><button class="mini" onclick="setControllerNodeId(${c.node})">Изменить ID</button></div><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`;
     }).join(''):'<tr><td colspan="8" class="muted">Контроллеры ещё не обнаружены</td></tr>';
     return CONTROLLERS;
 }
@@ -166,6 +166,27 @@ async function refreshControllers(){
         if(m)m.textContent='Обновлено с контроллеров: '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }catch(e){if(m)m.textContent='Ошибка обновления';}
     finally{if(b)b.disabled=false;}
+}
+
+async function readControllerAttendance(node){
+    const c=CONTROLLERS.find(x=>Number(x.node)===Number(node));const name=c?controllerDisplayName(c):('UNEX 721 #'+node);
+    if(!confirm(`Контроллер ${node} — ${name}: вычитать всю накопленную посещаемость из FIFO?\n\nКаждая запись 25H будет сохранена с исходной датой/временем контроллера. Только после успешного сохранения будет отправлен 37H Delete Event.`))return;
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary muted';controllerActionResult.textContent=`Node ${node}: вычитывание FIFO посещаемости...`;}
+    const r=await api('/api/controllers/read-attendance',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc({controller_node:node})});
+    let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent='Ошибка: '+(j.error||'не удалось запустить вычитывание');}return;}
+    for(let i=0;i<3600;i++){
+        await new Promise(resolve=>setTimeout(resolve,500));
+        const sr=await api('/api/controllers/read-attendance/status?job_id='+encodeURIComponent(j.job_id));let st={};try{st=await sr.json();}catch{}
+        if(!sr.ok)continue;
+        const range=(st.first_event_time||st.last_event_time)?` · период ${st.first_event_time||'—'} — ${st.last_event_time||'—'}`:'';
+        if(st.state==='completed'){
+            if(window.controllerActionResult){controllerActionResult.className='upload-summary '+(st.ok?'ok':'bad');controllerActionResult.innerHTML=`<b>Node ${node}: ${st.ok?'вычитывание завершено':'ошибка'}</b><br>Событий: ${Number(st.read||0)} · сохранено: ${Number(st.stored||0)} · проходов: ${Number(st.access_events||0)} · прочих: ${Number(st.raw_events||0)} · дубликатов: ${Number(st.duplicates||0)}${esc(range)}<br>${esc(st.message||st.status||'')}`;}
+            await loadControllers();return;
+        }
+        if(window.controllerActionResult)controllerActionResult.textContent=`Node ${node}: читаю FIFO... событий ${Number(st.read||0)}, сохранено ${Number(st.stored||0)}, проходов ${Number(st.access_events||0)}`;
+    }
+    if(window.controllerActionResult){controllerActionResult.className='upload-summary bad';controllerActionResult.textContent=`Node ${node}: тайм-аут ожидания. Проверьте LIVE протокол.`;}
 }
 
 async function setControllerNodeId(node){

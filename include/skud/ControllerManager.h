@@ -48,6 +48,12 @@ public:
     std::uint64_t queueSetNodeId(int controller_node,int new_controller_node);
     std::optional<ControllerActionJob> controllerActionJob(std::uint64_t id) const;
 
+    // Manual FIFO drain for attendance/history. Reads 25H records using their
+    // original controller timestamp and deletes each record with 37H only
+    // after it has been safely persisted locally.
+    std::uint64_t queueAttendanceRead(int controller_node);
+    std::optional<ControllerAttendanceReadJob> attendanceReadJob(std::uint64_t id) const;
+
     // User deletions use the same serial queue. When delete_from_system=true,
     // the local record is removed only after every selected controller confirms
     // deletion for that user.
@@ -87,6 +93,10 @@ private:
         int controller_node{};
         int new_controller_node{};
     };
+    struct PendingAttendanceRead {
+        std::uint64_t id{};
+        int controller_node{};
+    };
     struct PendingEepromSearch {
         std::uint64_t id{};
         int card_series{};
@@ -115,6 +125,8 @@ private:
     void processOneUserUpload(Unex721Protocol& proto);
     void processOneUserDelete(Unex721Protocol& proto);
     void processOneControllerAction(Unex721Protocol& proto);
+    int processAttendanceReadBatch(Unex721Protocol& proto);
+    bool handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed);
     void processUserReadBatch(Unex721Protocol& proto);
     void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;
@@ -148,6 +160,11 @@ private:
     std::deque<PendingControllerAction> action_queue_;
     std::map<std::uint64_t,ControllerActionJob> action_jobs_;
     std::uint64_t next_action_id_{1};
+
+    mutable std::mutex attendance_read_mu_;
+    std::deque<PendingAttendanceRead> attendance_read_queue_;
+    std::map<std::uint64_t,ControllerAttendanceReadJob> attendance_read_jobs_;
+    std::uint64_t next_attendance_read_id_{1};
 
     mutable std::mutex read_mu_;
     std::deque<PendingUserRead> read_queue_;

@@ -561,3 +561,12 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - The Controllers table shows both the locally configured Node and the physical `Reader ID` returned by `24H`, including an explicit mismatch warning.
 - Added **Изменить ID**. It uses official `80H Set Node ID`, validates range `1..254` and duplicate IDs, requires the ACK to contain the new Reader ID, then probes the new address with `24H` and only after that updates/persists the local controller configuration.
 - Live protocol names now include `24H Read RTC` and `80H Set Node ID`.
+
+## v0.3.24 — manual attendance FIFO read
+
+- Confirmed standard H-series `25H Get Event` decoding keeps the controller's own full event timestamp (`SS, MM, HH, weekday, DD, MM, YY`) and stores it as `YYYY-MM-DD HH:MM:SS`.
+- Historical FIFO events are therefore written to the attendance store under the date reported by the controller, not the date/time when the Linux server drains the FIFO.
+- Settings → Controllers now has **«Вычитать посещаемость»** per controller.
+- Manual drain reads `25H` until the controller reports an empty queue and shows progress/counts: total records, access events, other/raw events, duplicates, first/last controller timestamps.
+- Every FIFO record is persisted before `37H Delete Event`; on storage failure the record is intentionally left in the controller.
+- Manual draining runs in bounded batches on the same serialized COM worker and does not race a second background `25H` against the same node.

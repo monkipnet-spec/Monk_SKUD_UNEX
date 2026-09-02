@@ -219,6 +219,20 @@ std::optional<ControllerActionJob> ControllerManager::controllerActionJob(std::u
     std::lock_guard lk(action_mu_);auto it=action_jobs_.find(id);if(it==action_jobs_.end())return std::nullopt;return it->second;
 }
 
+std::uint64_t ControllerManager::queueAttendanceRead(int controller_node){
+    std::lock_guard lk(attendance_read_mu_);
+    const auto id=next_attendance_read_id_++;
+    ControllerAttendanceReadJob job;job.id=id;job.created_at=util::nowLocal();job.state="queued";job.controller_node=controller_node;
+    attendance_read_queue_.push_back(PendingAttendanceRead{id,controller_node});
+    attendance_read_jobs_[id]=std::move(job);
+    while(attendance_read_jobs_.size()>20)attendance_read_jobs_.erase(attendance_read_jobs_.begin());
+    return id;
+}
+
+std::optional<ControllerAttendanceReadJob> ControllerManager::attendanceReadJob(std::uint64_t id)const{
+    std::lock_guard lk(attendance_read_mu_);auto it=attendance_read_jobs_.find(id);if(it==attendance_read_jobs_.end())return std::nullopt;return it->second;
+}
+
 std::uint64_t ControllerManager::queueUserDelete(std::vector<User> users,std::vector<int> controller_nodes,bool delete_from_system){
     std::lock_guard lk(delete_mu_);
     const auto id=next_delete_id_++;
@@ -620,6 +634,124 @@ void ControllerManager::processOneControllerAction(Unex721Protocol& proto){
     }
 }
 
+bool ControllerManager::handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed){
+    duplicate=false;removed=false;
+    bool log_semantic=false;
+    {
+        std::lock_guard lk(trace_mu_);
+        if(last_event_trace_raw_!=evt.raw_hex){last_event_trace_raw_=evt.raw_hex;log_semantic=true;}
+    }
+    if(log_semantic){
+        std::string msg="Событие контроллера";
+        if(evt.event_code==0x0B)msg+=" · Normal Access";else if(evt.event_code==0x03)msg+=" · Invalid Card";
+        if(!evt.event_timestamp.empty())msg+=", время контроллера="+evt.event_timestamp;
+        if(evt.user_address>=0)msg+=", адрес пользователя="+std::to_string(evt.user_address);
+        if(evt.card.empty())msg+=", карта пока не декодирована";
+        appendProtocolTrace("EVENT",node,0x25,"semantic",evt.frame,msg,evt.card,evt.user_address);
+    }
+
+    RawEventFn cb;std::string cname;
+    {
+        std::lock_guard lk(mu_);
+        for(auto&c:controllers_)if(c.node==node){c.online=true;c.last_seen=util::nowLocal();c.last_raw_hex=evt.raw_hex;cname=c.name;}
+        cb=raw_cb_;
+    }
+    if(cb)cb(evt);
+
+    if(!evt.card.empty()){
+        rememberControllerCard(evt.card,node,cname,evt.raw_hex);
+        if(cfg_.getBool("cards.auto_create_unknown",false)&&!users_.byCard(evt.card)){
+            if(auto created=users_.ensureUserForCard(evt.card)){
+                attendance_.refreshUserMetadata();
+                appendProtocolTrace("INFO",node,0x25,"semantic",{},"Новая карта автоматически добавлена как пользователь №"+std::to_string(created->id),evt.card);
+            }
+        }
+    }
+
+    AttendanceEngine::ControllerEventProcessResult processed;
+    if(evt.event_code==0x0B&&!evt.card.empty())
+        processed=attendance_.onControllerAccessEvent(evt.card,node,cname,evt.raw_hex,evt.event_timestamp);
+    else
+        processed=attendance_.recordControllerRawEvent(node,cname,evt.raw_hex,evt.event_timestamp,evt.card);
+
+    if(!processed.stored){
+        appendProtocolTrace("INFO",node,0x25,"semantic",{},"Событие НЕ удалено из FIFO: не удалось сохранить его в локальное хранилище",evt.card,evt.user_address);
+        return false;
+    }
+    duplicate=processed.duplicate;
+    if(processed.duplicate&&log_semantic)
+        appendProtocolTrace("INFO",node,0x25,"semantic",{},"Повтор уже сохранённого FIFO-события: состояние посещаемости повторно не изменялось",evt.card,evt.user_address);
+
+    removed=proto.removeOldestEvent(static_cast<std::uint8_t>(node));
+    if(log_semantic){
+        appendProtocolTrace("INFO",node,0x37,"semantic",{},
+            removed?(processed.duplicate?"Дубликат уже был в БД; событие удалено из FIFO":"Событие сохранено с временем контроллера и удалено из FIFO")
+                   :"Не удалось удалить старейшее событие из FIFO; оно будет прочитано повторно");
+    }
+    return true;
+}
+
+int ControllerManager::processAttendanceReadBatch(Unex721Protocol& proto){
+    PendingAttendanceRead pending;
+    {
+        std::lock_guard lk(attendance_read_mu_);
+        if(attendance_read_queue_.empty())return 0;
+        pending=attendance_read_queue_.front();
+        auto it=attendance_read_jobs_.find(pending.id);if(it!=attendance_read_jobs_.end())it->second.state="running";
+    }
+
+    constexpr int batch=20;
+    for(int i=0;i<batch&&running_;++i){
+        bool responded=false;
+        auto evt=proto.getOldestEvent(static_cast<std::uint8_t>(pending.controller_node),&responded);
+        if(!responded){
+            std::lock_guard lk(attendance_read_mu_);
+            auto it=attendance_read_jobs_.find(pending.id);
+            if(it!=attendance_read_jobs_.end()){it->second.state="completed";it->second.ok=false;it->second.status="communication_error";it->second.message="Контроллер не ответил на 25H Get Event";++it->second.failed;}
+            if(!attendance_read_queue_.empty()&&attendance_read_queue_.front().id==pending.id)attendance_read_queue_.pop_front();
+            return pending.controller_node;
+        }
+        if(!evt){
+            std::lock_guard lk(attendance_read_mu_);
+            auto it=attendance_read_jobs_.find(pending.id);
+            if(it!=attendance_read_jobs_.end()){
+                auto&j=it->second;j.state="completed";j.ok=true;j.status="fifo_empty";
+                j.message="FIFO вычитан полностью: событий="+std::to_string(j.read)+", сохранено="+std::to_string(j.stored)+", дубликатов="+std::to_string(j.duplicates);
+            }
+            if(!attendance_read_queue_.empty()&&attendance_read_queue_.front().id==pending.id)attendance_read_queue_.pop_front();
+            appendProtocolTrace("INFO",pending.controller_node,0x25,"semantic",{},"Ручное вычитывание посещаемости завершено: FIFO пуст");
+            return pending.controller_node;
+        }
+
+        {
+            std::lock_guard lk(attendance_read_mu_);
+            auto it=attendance_read_jobs_.find(pending.id);if(it!=attendance_read_jobs_.end()){
+                auto&j=it->second;++j.read;
+                if(evt->event_code==0x0B)++j.access_events;else ++j.raw_events;
+                if(!evt->event_timestamp.empty()){if(j.first_event_time.empty())j.first_event_time=evt->event_timestamp;j.last_event_time=evt->event_timestamp;}
+            }
+        }
+
+        bool duplicate=false,removed=false;
+        const bool stored=handleControllerEvent(proto,pending.controller_node,*evt,duplicate,removed);
+        {
+            std::lock_guard lk(attendance_read_mu_);
+            auto it=attendance_read_jobs_.find(pending.id);if(it!=attendance_read_jobs_.end()){
+                auto&j=it->second;
+                if(stored)++j.stored;else ++j.failed;
+                if(duplicate)++j.duplicates;
+                if(!stored||!removed){
+                    j.state="completed";j.ok=false;j.status=!stored?"storage_error":"delete_error";
+                    j.message=!stored?"Событие не сохранено; оно оставлено в FIFO контроллера":"Событие сохранено, но 37H не подтвердил удаление; повторите вычитывание";
+                    if(!attendance_read_queue_.empty()&&attendance_read_queue_.front().id==pending.id)attendance_read_queue_.pop_front();
+                    return pending.controller_node;
+                }
+            }
+        }
+    }
+    return pending.controller_node;
+}
+
 void ControllerManager::processOneUserDelete(Unex721Protocol& proto){
     PendingUserDelete pending;
     {
@@ -689,6 +821,7 @@ void ControllerManager::loop(){
         processEepromSearchBatch(proto);
         processUserReadBatch(proto);
         processOneControllerAction(proto);
+        const int manual_attendance_node=processAttendanceReadBatch(proto);
         processOneUserDelete(proto);
         processOneUserUpload(proto);
 
@@ -740,60 +873,23 @@ void ControllerManager::loop(){
             }
 
             // Poll events first: a failed clock synchronization must never starve 25H.
-            bool responded=false;
-            auto evt=proto.getOldestEvent(static_cast<std::uint8_t>(node),&responded);
-            RawEventFn cb;std::string cname;
-            {
-                std::lock_guard lk(mu_);
-                for(auto&c:controllers_)if(c.node==node){
-                    if(responded){c.online=true;c.last_seen=util::nowLocal();}
-                    else if(probe_attempted&&!probe_ok)c.online=false;
-                    if(evt)c.last_raw_hex=evt->raw_hex;
-                    cname=c.name;
-                }
-                cb=raw_cb_;
-            }
-            if(evt){
-                bool log_semantic=false;{std::lock_guard lk(trace_mu_);if(last_event_trace_raw_!=evt->raw_hex){last_event_trace_raw_=evt->raw_hex;log_semantic=true;}}
-                if(log_semantic){
-                    std::string msg="Событие контроллера";
-                    if(evt->event_code==0x0B)msg+=" · Normal Access";else if(evt->event_code==0x03)msg+=" · Invalid Card";
-                    if(!evt->event_timestamp.empty())msg+=", время контроллера="+evt->event_timestamp;
-                    if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);
-                    if(evt->card.empty())msg+=", карта пока не декодирована";
-                    appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);
-                }
-                if(cb)cb(*evt);
-
-                if(!evt->card.empty()){
-                    rememberControllerCard(evt->card,node,cname,evt->raw_hex);
-                    if(cfg_.getBool("cards.auto_create_unknown",false)&&!users_.byCard(evt->card)){
-                        if(auto created=users_.ensureUserForCard(evt->card)){
-                            attendance_.refreshUserMetadata();
-                            appendProtocolTrace("INFO",node,0x25,"semantic",{},"Новая карта автоматически добавлена как пользователь №"+std::to_string(created->id),evt->card);
-                        }
+            // A manual "Вычитать посещаемость" job owns this node for the current
+            // loop iteration, so do not issue a second background 25H in parallel.
+            if(manual_attendance_node!=node){
+                bool responded=false;
+                auto evt=proto.getOldestEvent(static_cast<std::uint8_t>(node),&responded);
+                {
+                    std::lock_guard lk(mu_);
+                    for(auto&c:controllers_)if(c.node==node){
+                        if(responded){c.online=true;c.last_seen=util::nowLocal();}
+                        else if(probe_attempted&&!probe_ok)c.online=false;
+                        if(evt)c.last_raw_hex=evt->raw_hex;
                     }
                 }
-
-                AttendanceEngine::ControllerEventProcessResult processed;
-                if(evt->event_code==0x0B&&!evt->card.empty())
-                    processed=attendance_.onControllerAccessEvent(evt->card,node,cname,evt->raw_hex,evt->event_timestamp);
-                else
-                    processed=attendance_.recordControllerRawEvent(node,cname,evt->raw_hex,evt->event_timestamp,evt->card);
-
-                if(!processed.stored){
-                    appendProtocolTrace("INFO",node,0x25,"semantic",{},"Событие НЕ удалено из FIFO: не удалось сохранить его в локальное хранилище",evt->card,evt->user_address);
-                    std::this_thread::sleep_for(300ms);
-                    continue;
-                }
-                if(processed.duplicate&&log_semantic)
-                    appendProtocolTrace("INFO",node,0x25,"semantic",{},"Повтор уже сохранённого FIFO-события: состояние посещаемости повторно не изменялось",evt->card,evt->user_address);
-
-                const bool removed=proto.removeOldestEvent(static_cast<std::uint8_t>(node));
-                if(log_semantic){
-                    appendProtocolTrace("INFO",node,0x37,"semantic",{},
-                        removed?(processed.duplicate?"Дубликат уже был в БД; событие удалено из FIFO":"Событие сохранено с временем контроллера и удалено из FIFO")
-                               :"Не удалось удалить старейшее событие из FIFO; оно будет прочитано повторно");
+                if(evt){
+                    bool duplicate=false,removed=false;
+                    const bool stored=handleControllerEvent(proto,node,*evt,duplicate,removed);
+                    if(!stored){std::this_thread::sleep_for(300ms);continue;}
                 }
             }
 

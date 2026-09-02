@@ -141,6 +141,26 @@ WebServer::Res WebServer::jsonControllerActionJob(const ControllerActionJob&job)
     return{200,"application/json; charset=utf-8",o.str()};
 }
 
+WebServer::Res WebServer::jsonAttendanceReadJob(const ControllerAttendanceReadJob&job){
+    std::ostringstream o;
+    o<<"{\"id\":"<<job.id
+     <<",\"created_at\":\""<<util::jsonEscape(job.created_at)<<"\""
+     <<",\"state\":\""<<util::jsonEscape(job.state)<<"\""
+     <<",\"controller_node\":"<<job.controller_node
+     <<",\"ok\":"<<(job.ok?"true":"false")
+     <<",\"status\":\""<<util::jsonEscape(job.status)<<"\""
+     <<",\"message\":\""<<util::jsonEscape(job.message)<<"\""
+     <<",\"read\":"<<job.read
+     <<",\"stored\":"<<job.stored
+     <<",\"access_events\":"<<job.access_events
+     <<",\"raw_events\":"<<job.raw_events
+     <<",\"duplicates\":"<<job.duplicates
+     <<",\"failed\":"<<job.failed
+     <<",\"first_event_time\":\""<<util::jsonEscape(job.first_event_time)<<"\""
+     <<",\"last_event_time\":\""<<util::jsonEscape(job.last_event_time)<<"\"}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+
 WebServer::Res WebServer::jsonUserDeleteJob(const ControllerUserDeleteJob&job){
     std::ostringstream o;
     o<<"{\"id\":"<<job.id
@@ -279,6 +299,16 @@ WebServer::Res WebServer::route(const Req&r){
     }
     if(r.path=="/api/controllers"&&r.method=="GET")return jsonControllers();
     if(r.path=="/api/controllers/refresh"&&r.method=="POST"){controllers_.requestControllerRefresh();return{200,"application/json","{\"ok\":true}"};}
+    if(r.path=="/api/controllers/read-attendance"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);int node=0;try{node=std::stoi(f["controller_node"]);}catch(...){return{400,"application/json","{\"ok\":false,\"error\":\"invalid node\"}"};}
+        auto allc=controllers_.controllers();auto it=std::find_if(allc.begin(),allc.end(),[&](const Controller&c){return c.node==node&&c.enabled;});
+        if(it==allc.end())return{400,"application/json","{\"ok\":false,\"error\":\"controller not found or disabled\"}"};
+        auto id=controllers_.queueAttendanceRead(node);std::ostringstream o;o<<"{\"ok\":true,\"job_id\":"<<id<<",\"controller_node\":"<<node<<"}";return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/controllers/read-attendance/status"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);std::uint64_t id=0;try{id=std::stoull(q["job_id"]);}catch(...){}
+        auto job=controllers_.attendanceReadJob(id);if(!job)return{404,"application/json","{\"error\":\"attendance read job not found\"}"};return jsonAttendanceReadJob(*job);
+    }
     if(r.path=="/api/controllers/set-node-id"&&r.method=="POST"){
         auto f=util::parseForm(r.body);int node=0,new_node=0;try{node=std::stoi(f["controller_node"]);new_node=std::stoi(f["new_controller_node"]);}catch(...){return{400,"application/json","{\"ok\":false,\"error\":\"invalid node id\"}"};}
         if(node<1||node>254||new_node<1||new_node>254)return{400,"application/json","{\"ok\":false,\"error\":\"Node ID must be 1..254\"}"};

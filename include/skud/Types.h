@@ -125,6 +125,24 @@ struct ControllerActionJob {
 };
 
 
+struct ControllerAttendanceReadJob {
+    std::uint64_t id{};
+    std::string created_at;
+    std::string state; // queued, running, completed
+    int controller_node{};
+    bool ok{false};
+    std::string status;
+    std::string message;
+    int read{};
+    int stored{};
+    int access_events{};
+    int raw_events{};
+    int duplicates{};
+    int failed{};
+    std::string first_event_time;
+    std::string last_event_time;
+};
+
 struct ControllerUserDeleteResult {
     int user_id{};
     int controller_node{};

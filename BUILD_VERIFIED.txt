@@ -96,3 +96,14 @@ v0.3.23 checks:
 - Exact generated frames: 24H node2 `7E 04 02 24 D9 FF`; 80H 2->3 `7E 05 02 80 03 7E 03`; 24H node3 `7E 04 03 24 D8 FF`
 - Controllers refresh button: POST hardware refresh + cached status reload
 - Web cache revision: v=0323
+
+v0.3.24 checks:
+- Release CMake build: PASS
+- web/app.js syntax: PASS
+- Standard 25H full controller timestamp -> `YYYY-MM-DD HH:MM:SS`: PASS
+- Manual Settings → Controllers → «Вычитать посещаемость»: added
+- Manual FIFO drain PTY integration: PASS; 2 records read, 2 stored, 2 confirmed 37H deletes
+- Historical date fixture: controller events `2026-09-01 16:39:01/02` stored in `data/events/2026-09-01.csv`: PASS
+- Valid 0BH event counted as access; 03H invalid-card event stored as raw diagnostic: PASS
+- FIFO safety: event is not deleted if local persistence fails
+- Web cache revision: v=0324
