@@ -4,7 +4,7 @@ function byId(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function time(v){v=String(v||'');return v.length>=19?v.slice(11,19):(v||'—');}
 function tick(){var d=new Date();byId('clock').textContent=d.toLocaleTimeString('ru-RU',{hour12:false});byId('date').textContent=d.toLocaleDateString('ru-RU',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});}
-function statusHtml(s){if(s==='at_work')return '<span class="status present">НА РАБОТЕ</span>';if(s==='left')return '<span class="status left">УШЁЛ</span>';return '<span class="status absent">НЕ ПРИХОДИЛ</span>';}
+function statusHtml(s){if(s==='at_work')return '<span class="status present">НА РАБОТЕ</span>';if(s==='left')return '<span class="status left">УШЁЛ</span>';if(s==='disabled')return '<span class="status disabled">ОТКЛЮЧЕН</span>';return '<span class="status absent">НЕ ПРИХОДИЛ</span>';}
 function xhrJson(url,ok,fail){var x=new XMLHttpRequest();x.open('GET',url,true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status>=200&&x.status<300){try{ok(JSON.parse(x.responseText));}catch(e){fail(e);}}else fail(new Error('HTTP '+x.status));};x.onerror=function(){fail(new Error('Ошибка сети'));};x.send(null);}
 
 var scrollBox=null;
@@ -47,15 +47,30 @@ function initScrollInteraction(){
  scrollBox.addEventListener('wheel',markManualPause,false);
 }
 
+function statusRank(s){return s==='at_work'?0:s==='left'?1:s==='absent'?2:3;}
+function sortRowsByStatus(rows){
+ var copy=rows.slice(0);
+ copy.sort(function(a,b){
+  a=a||{};b=b||{};
+  var ar=statusRank(a.status),br=statusRank(b.status);
+  if(ar!==br)return ar-br;
+  var an=String(a.name||'').toLocaleLowerCase();
+  var bn=String(b.name||'').toLocaleLowerCase();
+  if(an<bn)return -1;if(an>bn)return 1;
+  return (Number(a.id)||0)-(Number(b.id)||0);
+ });
+ return copy;
+}
 function buildRows(rows){
  var out='';
  for(var i=0;i<rows.length;i++){
   var x=rows[i]||{};
-  out+='<tr class="'+(x.status==='at_work'?'present-row':'')+'"><td>'+statusHtml(x.status)+'</td><td class="worker-name">'+esc(x.name)+'</td><td>'+esc(x.position||'—')+'</td><td class="muted">'+esc(x.department||'—')+'</td><td class="time">'+time(x.arrival_time)+'</td><td class="time">'+time(x.departure_time)+'</td></tr>';
+  out+='<tr class="'+(x.status==='at_work'?'present-row':(x.status==='disabled'?'disabled-row':''))+'"><td>'+statusHtml(x.status)+'</td><td class="worker-name">'+esc(x.name)+'</td><td>'+esc(x.position||'—')+'</td><td class="muted">'+esc(x.department||'—')+'</td><td class="time">'+time(x.arrival_time)+'</td><td class="time">'+time(x.departure_time)+'</td></tr>';
  }
  return out;
 }
 function updateWorkers(rows){
+ rows=sortRowsByStatus(rows||[]);
  var sig='';try{sig=JSON.stringify(rows);}catch(e){sig=String((new Date()).getTime());}
  if(sig===rowsSignature){ensureAutoScroll();return;}
  var oldTop=scrollBox?scrollBox.scrollTop:0;

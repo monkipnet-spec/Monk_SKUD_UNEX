@@ -130,3 +130,19 @@ v0.3.27 checks:
 - Cyclic overflow auto-scroll retained.
 - Monitor refresh remains 3 seconds.
 - Web cache revision: v=0327
+
+[v0.3.28] Monitor total-user consistency: all users included, disabled visibly marked; release build verified.
+
+
+v0.3.29 checks:
+- TV monitor status ordering: at_work -> left -> absent -> disabled.
+- Within status group: stable name/id ordering.
+- 3-second refresh and cyclic overflow auto-scroll retained.
+- Web cache revision: v=0329
+
+v0.3.30 checks:
+- Telegram report fixed-width table formatting: added.
+- UTF-8 Cyrillic clipping/padding: added.
+- Emoji markers kept outside monospace columns: added.
+- Report summary: total / active / on-site / off-site counts.
+- Daily ordering: present employees first, then departed; stable name ordering.

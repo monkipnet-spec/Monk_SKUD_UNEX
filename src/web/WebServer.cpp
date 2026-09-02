@@ -262,24 +262,30 @@ WebServer::Res WebServer::jsonMonitor(){
 
     struct Row{User user;std::string arrival;std::string departure;std::string status;};
     std::vector<Row> rows;
-    int registered=0,on_site=0;
+    // Keep the TV monitor count consistent with the main web UI: both count
+    // every user record. Disabled users remain visible instead of silently
+    // disappearing from the monitor; they get a dedicated neutral status.
+    const int registered=static_cast<int>(all.size());
+    int on_site=0;
     for(const auto&u:all){
-        if(!u.enabled)continue;
-        ++registered;
-        const bool here=present_ids.count(u.id)>0;
+        const bool here=u.enabled&&present_ids.count(u.id)>0;
         if(here)++on_site;
         Row row;row.user=u;
         auto it=today_by_user.find(u.id);
         if(it!=today_by_user.end()){row.arrival=it->second.arrival_time;row.departure=it->second.departure_time;}
-        row.status=here?"at_work":(it!=today_by_user.end()?"left":"absent");
+        row.status=!u.enabled?"disabled":(here?"at_work":(it!=today_by_user.end()?"left":"absent"));
         rows.push_back(std::move(row));
     }
+    // TV monitor ordering: people currently on site must always be visible first.
+    // Keep a deterministic name order inside each status group so 3-second
+    // refreshes do not make rows jump around on a television dashboard.
     std::sort(rows.begin(),rows.end(),[](const Row&a,const Row&b){
-        auto rank=[](const std::string&s){return s=="at_work"?0:s=="left"?1:2;};
+        auto rank=[](const std::string&s){return s=="at_work"?0:s=="left"?1:s=="absent"?2:3;};
         const int ar=rank(a.status),br=rank(b.status);if(ar!=br)return ar<br;
-        if(a.user.department!=b.user.department)return a.user.department<b.user.department;
         if(a.user.last_name!=b.user.last_name)return a.user.last_name<b.user.last_name;
-        return a.user.first_name<b.user.first_name;
+        if(a.user.first_name!=b.user.first_name)return a.user.first_name<b.user.first_name;
+        if(a.user.middle_name!=b.user.middle_name)return a.user.middle_name<b.user.middle_name;
+        return a.user.id<b.user.id;
     });
     int online=0,enabled_ctrl=0;for(const auto&c:ctrls)if(c.enabled){++enabled_ctrl;if(c.online)++online;}
     std::ostringstream o;

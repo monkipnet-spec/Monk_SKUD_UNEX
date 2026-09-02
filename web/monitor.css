@@ -40,3 +40,7 @@ tbody tr{background:#091827}tbody tr:nth-child(even){background:#0b1b2c}tbody tr
 th:nth-child(1){width:14%}th:nth-child(2){width:23%}th:nth-child(3){width:20%}th:nth-child(4){width:18%}th:nth-child(5),th:nth-child(6){width:12.5%}
 
 @media(max-width:900px){body{padding:4px}.topbar{min-height:30px}.brand{font-size:12px}.subtitle{font-size:7px}.clock{font-size:16px}.date{font-size:7px}.connection{font-size:8px}.metric{min-height:48px;padding:6px 8px;margin-right:4px}.metric span{font-size:8px}.metric b{font-size:21px;line-height:23px}.table-title span{display:none}table{min-width:760px}th{font-size:7px;padding:4px 6px}td{height:26px;font-size:12px;padding:4px 6px}.worker-name{font-size:inherit}.status{font-size:10px}}
+
+/* v0.3.28: disabled users remain visible so monitor and UI totals match. */
+.status.disabled{background:#596170;color:#fff;border-color:#717b8d;}
+tr.disabled-row{opacity:.72;}

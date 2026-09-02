@@ -88,6 +88,59 @@ std::string htmlEscape(const std::string& value) {
     return out;
 }
 
+std::string compactWhitespace(std::string value) {
+    for (char& c : value) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    std::string out; out.reserve(value.size());
+    bool previous_space = false;
+    for (unsigned char c : value) {
+        if (c == ' ') {
+            if (!previous_space) out.push_back(' ');
+            previous_space = true;
+        } else {
+            out.push_back(static_cast<char>(c));
+            previous_space = false;
+        }
+    }
+    while (!out.empty() && out.front() == ' ') out.erase(out.begin());
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+std::size_t utf8Length(const std::string& value) {
+    std::size_t count = 0;
+    for (unsigned char c : value) if ((c & 0xC0) != 0x80) ++count;
+    return count;
+}
+
+std::string utf8Prefix(const std::string& value, std::size_t max_chars) {
+    if (max_chars == 0) return {};
+    std::size_t chars = 0, end = 0;
+    while (end < value.size() && chars < max_chars) {
+        const unsigned char c = static_cast<unsigned char>(value[end]);
+        std::size_t width = 1;
+        if ((c & 0x80) == 0) width = 1;
+        else if ((c & 0xE0) == 0xC0) width = 2;
+        else if ((c & 0xF0) == 0xE0) width = 3;
+        else if ((c & 0xF8) == 0xF0) width = 4;
+        if (end + width > value.size()) width = 1;
+        end += width;
+        ++chars;
+    }
+    return value.substr(0, end);
+}
+
+std::string telegramCell(const std::string& raw, std::size_t width) {
+    std::string value = compactWhitespace(raw.empty() ? "—" : raw);
+    auto length = utf8Length(value);
+    if (length > width) {
+        if (width <= 1) value = "…";
+        else value = utf8Prefix(value, width - 1) + "…";
+        length = utf8Length(value);
+    }
+    if (length < width) value.append(width - length, ' ');
+    return value;
+}
+
 bool validTimeOfDay(const std::string& value, int& hour, int& minute) {
     if (value.size() != 5 || value[2] != ':') return false;
     try {
@@ -257,6 +310,7 @@ bool ReportManager::sendToTelegram(const std::string& from, const std::string& t
     if (!cfg_.getBool("telegram.report_text_copy", true)) return true;
 
     const auto all_users = users_.list();
+    const int total_users = static_cast<int>(all_users.size());
     int enabled_users = 0;
     for (const auto& u : all_users) if (u.enabled) ++enabled_users;
     int on_site = 0;
@@ -272,52 +326,88 @@ bool ReportManager::sendToTelegram(const std::string& from, const std::string& t
     std::vector<std::string> messages;
     {
         std::ostringstream summary;
-        summary << "<b>📋 ОТЧЕТ ПО ПОСЕЩАЕМОСТИ</b>\n"
-                << "Период: <b>" << htmlEscape(from) << " — " << htmlEscape(to) << "</b>\n"
-                << "👥 Всего работников: <b>" << enabled_users << "</b>\n"
-                << "🏢 Сейчас на объекте: <b>" << on_site << "</b>";
+        summary << "<b>📋 ОТЧЁТ ПО ПОСЕЩАЕМОСТИ</b>\n"
+                << "📅 Период: <b>" << htmlEscape(from) << " — " << htmlEscape(to) << "</b>\n\n"
+                << "👥 Всего работников: <b>" << total_users << "</b>";
+        if (enabled_users != total_users) summary << " · активных: <b>" << enabled_users << "</b>";
+        summary << "\n🏢 Сейчас на объекте: <b>" << on_site << "</b>"
+                << "\n🚪 Вне объекта: <b>" << std::max(0, enabled_users - on_site) << "</b>"
+                << "\n\n🟢 — на работе   🔴 — ушёл";
         messages.push_back(summary.str());
     }
 
-    // Telegram limits one message to about 4096 UTF-8 characters.  Split the
-    // table by rows and keep every <pre> block independently valid so a large
-    // staff list cannot make the whole scheduled report fail.
+    // Telegram has no real HTML <table>.  Fixed-width <code> rows are the
+    // most stable table-like representation. UTF-8-aware clipping keeps
+    // Cyrillic names aligned; every row gets an equally positioned coloured
+    // marker outside the monospace span, so emoji width does not affect columns.
     constexpr std::size_t kTelegramChunkLimit = 3300;
-    const std::string table_header = "Ст │ Сотрудник │ Должность │ Приход │ Уход │ Состояние\n";
+    constexpr std::size_t kStateWidth = 9;
+    constexpr std::size_t kNameWidth = 23;
+    constexpr std::size_t kPositionWidth = 18;
+    constexpr std::size_t kTimeWidth = 8;
+    const std::string table_header =
+        telegramCell("СТАТУС", kStateWidth) + " │ " +
+        telegramCell("СОТРУДНИК", kNameWidth) + " │ " +
+        telegramCell("ДОЛЖНОСТЬ", kPositionWidth) + " │ " +
+        telegramCell("ПРИХОД", kTimeWidth) + " │ " +
+        telegramCell("УХОД", kTimeWidth);
     for (auto t = from_t; t <= to_t; t = shiftDays(t, 1)) {
         const auto date = formatDate(t);
         auto rows = store_.loadDailyAttendance(date);
-        const std::string day_header = "<b>" + htmlEscape(date) + "</b>\n";
+        const std::string day_header = "<b>📅 " + htmlEscape(date) + "</b>\n";
         if (rows.empty()) {
             messages.push_back(day_header + "<i>Событий посещаемости нет.</i>");
             continue;
         }
 
-        std::string chunk = day_header + "<pre>" + table_header;
         for (auto& row : rows) {
             if (auto u = users_.byId(row.user_id)) {
                 if (row.user_name.empty()) row.user_name = userName(*u);
                 if (row.position.empty()) row.position = u->position;
                 if (row.department.empty()) row.department = u->department;
             }
-            const std::string mark = row.presence == PresenceState::Present ? "🟢" : "🔴";
-            const std::string state = row.presence == PresenceState::Present ? "На работе" : "Ушел";
-            std::ostringstream line;
-            line << mark << " │ " << htmlEscape(row.user_name.empty() ? ("Пользователь №" + std::to_string(row.user_id)) : row.user_name)
-                 << " │ " << htmlEscape(row.position.empty() ? "—" : row.position)
-                 << " │ " << htmlEscape(timeOnly(row.arrival_time))
-                 << " │ " << htmlEscape(timeOnly(row.departure_time))
-                 << " │ " << state << "\n";
-            const auto row_text = line.str();
-            if (chunk.size() + row_text.size() + 7 > kTelegramChunkLimit &&
-                chunk.size() > day_header.size() + table_header.size() + 5) {
-                chunk += "</pre>";
+        }
+        std::stable_sort(rows.begin(), rows.end(), [](const DailyAttendance& a, const DailyAttendance& b) {
+            if (a.presence != b.presence) return a.presence == PresenceState::Present;
+            if (a.user_name != b.user_name) return a.user_name < b.user_name;
+            return a.user_id < b.user_id;
+        });
+
+        int present_count = 0;
+        for (const auto& row : rows) if (row.presence == PresenceState::Present) ++present_count;
+        const int left_count = static_cast<int>(rows.size()) - present_count;
+        const std::string day_summary =
+            "🟢 На работе: <b>" + std::to_string(present_count) +
+            "</b>   🔴 Ушли: <b>" + std::to_string(left_count) + "</b>\n";
+
+        const std::string block_prefix = day_header + day_summary +
+                                         "🔹 <code>" + htmlEscape(table_header) + "</code>\n";
+        std::string chunk = block_prefix;
+        for (const auto& row : rows) {
+            const bool present = row.presence == PresenceState::Present;
+            const std::string status = present ? "НА РАБОТЕ" : "УШЁЛ";
+            const std::string name = row.user_name.empty()
+                ? ("Пользователь №" + std::to_string(row.user_id)) : row.user_name;
+            const std::string position = row.position.empty() ? "—" : row.position;
+            const std::string arrival = timeOnly(row.arrival_time);
+            const std::string departure = timeOnly(row.departure_time);
+
+            const std::string plain_line =
+                telegramCell(status, kStateWidth) + " │ " +
+                telegramCell(name, kNameWidth) + " │ " +
+                telegramCell(position, kPositionWidth) + " │ " +
+                telegramCell(arrival, kTimeWidth) + " │ " +
+                telegramCell(departure, kTimeWidth);
+            const std::string row_text = (present ? "🟢" : "🔴") +
+                                         std::string(" <code>") + htmlEscape(plain_line) + "</code>\n";
+
+            if (chunk.size() + row_text.size() + 12 > kTelegramChunkLimit &&
+                chunk.size() > block_prefix.size()) {
                 messages.push_back(chunk);
-                chunk = day_header + "<pre>" + table_header;
+                chunk = block_prefix;
             }
             chunk += row_text;
         }
-        chunk += "</pre>";
         messages.push_back(chunk);
     }
 

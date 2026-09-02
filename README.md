@@ -590,3 +590,21 @@ The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the
 - Restored the employee-row font size from v0.3.25 for better TV readability.
 - Compact header from v0.3.26 is retained.
 - Cyclic auto-scroll remains enabled when the employee table exceeds the available height.
+
+### v0.3.28
+- TV monitor now counts the same complete user list as the main web UI.
+- Disabled users are no longer silently omitted from `/api/monitor`; they are shown with a neutral `ОТКЛЮЧЕН` status.
+- Presence count still includes only enabled users that are actually on site.
+
+
+### v0.3.29
+- TV monitor explicitly sorts employees by current status on every 3-second refresh: **НА РАБОТЕ** first, then **УШЁЛ**, **НЕ ПРИХОДИЛ**, and **ОТКЛЮЧЕН**.
+- Within each status group employees are sorted by name for a stable TV list.
+- Cyclic overflow auto-scroll and the compact monitor header are retained.
+
+### v0.3.30
+- Telegram text-copy report was reformatted into a compact fixed-width table suitable for mobile and desktop Telegram clients.
+- UTF-8-aware clipping/padding keeps Cyrillic employee names and positions aligned instead of calculating widths from raw UTF-8 byte counts.
+- Status marker is rendered outside the monospace code span, so 🟢/🔴 emoji width does not break table columns.
+- Report summary now shows total workers, active workers when different, current on-site count and off-site count.
+- Each report day shows its own "На работе / Ушли" totals and rows are ordered with currently present employees first.
