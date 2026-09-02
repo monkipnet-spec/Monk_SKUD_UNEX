@@ -16,9 +16,11 @@ public:
     void stop();
     void enqueue(const AttendanceEvent& e);
     bool sendTest(std::string& error);
+    bool sendText(const std::string& text,std::string& error);
+    bool sendHtml(const std::string& html,std::string& error);
     bool sendDocument(const std::string& path, const std::string& caption, std::string& error);
 private:
-    bool sendText(const std::string& text,std::string& error);
+    bool sendMessage(const std::string& text,const std::string& parse_mode,std::string& error);
     void loop();
     Config& cfg_; std::atomic<bool> running_{false}; std::thread thread_; std::mutex mu_; std::mutex send_mu_; std::condition_variable cv_; std::deque<AttendanceEvent> q_;
 }; }

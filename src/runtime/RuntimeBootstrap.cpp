@@ -65,6 +65,12 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
             reinterpret_cast<const char*>(embedded::app_js), embedded::app_js_size, error)) return false;
     if (!writeOrRefresh(base / "web" / "style.css",
             reinterpret_cast<const char*>(embedded::style_css), embedded::style_css_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "monitor.html",
+            reinterpret_cast<const char*>(embedded::monitor_html), embedded::monitor_html_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "monitor.js",
+            reinterpret_cast<const char*>(embedded::monitor_js), embedded::monitor_js_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "monitor.css",
+            reinterpret_cast<const char*>(embedded::monitor_css), embedded::monitor_css_size, error)) return false;
 
     return true;
 }

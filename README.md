@@ -570,3 +570,10 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - Manual drain reads `25H` until the controller reports an empty queue and shows progress/counts: total records, access events, other/raw events, duplicates, first/last controller timestamps.
 - Every FIFO record is persisted before `37H Delete Event`; on storage failure the record is intentionally left in the controller.
 - Manual draining runs in bounded batches on the same serialized COM worker and does not race a second background `25H` against the same node.
+
+## TV / Android monitor (v0.3.25)
+
+Read-only real-time dashboard: `http://SERVER_IP:PORT/monitor.html` (updates every 3 seconds).
+Android 5.0+ kiosk source is in `android/Monk_SKUD_Monitor`. It stores the dashboard URL,
+runs full-screen/landscape, keeps the display awake and requests autostart after device boot.
+The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the APK artifact.

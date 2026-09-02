@@ -8,6 +8,7 @@ namespace skud {
 class Config;
 class FileStore;
 class UserManager;
+class AttendanceEngine;
 class TelegramNotifier;
 
 struct ReportRange {
@@ -40,7 +41,7 @@ struct ReportSchedule {
 
 class ReportManager {
 public:
-    ReportManager(Config& cfg, FileStore& store, UserManager& users, TelegramNotifier& telegram, std::string root);
+    ReportManager(Config& cfg, FileStore& store, UserManager& users, AttendanceEngine& attendance, TelegramNotifier& telegram, std::string root);
     ~ReportManager();
 
     void start();
@@ -65,6 +66,7 @@ private:
     Config& cfg_;
     FileStore& store_;
     UserManager& users_;
+    AttendanceEngine& attendance_;
     TelegramNotifier& telegram_;
     std::string root_;
     std::atomic<bool> running_{false};

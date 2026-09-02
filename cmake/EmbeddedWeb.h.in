@@ -10,4 +10,10 @@ inline constexpr unsigned char app_js[] = {@EMBED_APP_JS@};
 inline constexpr std::size_t app_js_size = sizeof(app_js);
 inline constexpr unsigned char style_css[] = {@EMBED_STYLE_CSS@};
 inline constexpr std::size_t style_css_size = sizeof(style_css);
+inline constexpr unsigned char monitor_html[] = {@EMBED_MONITOR_HTML@};
+inline constexpr std::size_t monitor_html_size = sizeof(monitor_html);
+inline constexpr unsigned char monitor_js[] = {@EMBED_MONITOR_JS@};
+inline constexpr std::size_t monitor_js_size = sizeof(monitor_js);
+inline constexpr unsigned char monitor_css[] = {@EMBED_MONITOR_CSS@};
+inline constexpr std::size_t monitor_css_size = sizeof(monitor_css);
 }

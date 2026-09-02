@@ -38,7 +38,7 @@ AttendanceEvent AttendanceEngine::onCardRead(const std::string&card,int node,con
     return onControllerAccessEvent(card,node,controller,raw,util::nowLocal()).event;
 }
 
-AttendanceEngine::ControllerEventProcessResult AttendanceEngine::onControllerAccessEvent(const std::string&card,int node,const std::string&controller,const std::string&raw,const std::string&event_timestamp){
+AttendanceEngine::ControllerEventProcessResult AttendanceEngine::onControllerAccessEvent(const std::string&card,int node,const std::string&controller,const std::string&raw,const std::string&event_timestamp,bool allow_notification){
     ControllerEventProcessResult result;
     std::string ts=event_timestamp;
     bool event_time_ok=false;
@@ -59,7 +59,7 @@ AttendanceEngine::ControllerEventProcessResult AttendanceEngine::onControllerAcc
     {
         std::lock_guard lk(mu_);
         auto user=users_.byCard(card);
-        if(user){e.user_id=user->id;e.user_name=user->last_name+" "+user->first_name;e.department=user->department;}else e.type=AttendanceEventType::UnknownCard;
+        if(user){e.user_id=user->id;e.user_name=user->last_name+" "+user->first_name;e.position=user->position;e.department=user->department;e.telegram_arrival=user->telegram_arrival;e.telegram_departure=user->telegram_departure;}else e.type=AttendanceEventType::UnknownCard;
         const std::string state_key=user?userStateKey(user->id):cardStateKey(card);
         auto& st=states_[state_key];
         bool accidental=false;
@@ -87,7 +87,7 @@ AttendanceEngine::ControllerEventProcessResult AttendanceEngine::onControllerAcc
         persistLocked();notify=notifier_;
     }
     result.event=e;result.stored=true;
-    if(notify&&(e.type==AttendanceEventType::Arrival||e.type==AttendanceEventType::Departure))notify(e);
+    if(allow_notification&&notify&&(e.type==AttendanceEventType::Arrival||e.type==AttendanceEventType::Departure))notify(e);
     return result;
 }
 

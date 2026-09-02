@@ -126,7 +126,7 @@ private:
     void processOneUserDelete(Unex721Protocol& proto);
     void processOneControllerAction(Unex721Protocol& proto);
     int processAttendanceReadBatch(Unex721Protocol& proto);
-    bool handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed);
+    bool handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed,bool allow_notification=true);
     void processUserReadBatch(Unex721Protocol& proto);
     void processEepromSearchBatch(Unex721Protocol& proto);
     void finishBlockedUserUpload(ControllerUserUploadJob& job,const std::vector<User>&users,const std::vector<int>&controller_nodes) const;

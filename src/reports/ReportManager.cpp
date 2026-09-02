@@ -1,5 +1,6 @@
 #include "skud/ReportManager.h"
 #include "skud/Config.h"
+#include "skud/AttendanceEngine.h"
 #include "skud/FileStore.h"
 #include "skud/TelegramNotifier.h"
 #include "skud/UserManager.h"
@@ -75,6 +76,18 @@ std::string userName(const User& u) {
     return name.empty() ? ("Пользователь №" + std::to_string(u.id)) : name;
 }
 
+std::string htmlEscape(const std::string& value) {
+    std::string out; out.reserve(value.size() + 16);
+    for (char c : value) {
+        if (c == '&') out += "&amp;";
+        else if (c == '<') out += "&lt;";
+        else if (c == '>') out += "&gt;";
+        else if (c == '\"') out += "&quot;";
+        else out += c;
+    }
+    return out;
+}
+
 bool validTimeOfDay(const std::string& value, int& hour, int& minute) {
     if (value.size() != 5 || value[2] != ':') return false;
     try {
@@ -86,9 +99,9 @@ bool validTimeOfDay(const std::string& value, int& hour, int& minute) {
 
 } // namespace
 
-ReportManager::ReportManager(Config& cfg, FileStore& store, UserManager& users,
+ReportManager::ReportManager(Config& cfg, FileStore& store, UserManager& users, AttendanceEngine& attendance,
                              TelegramNotifier& telegram, std::string root)
-    : cfg_(cfg), store_(store), users_(users), telegram_(telegram), root_(std::move(root)) {
+    : cfg_(cfg), store_(store), users_(users), attendance_(attendance), telegram_(telegram), root_(std::move(root)) {
     std::filesystem::create_directories(std::filesystem::path(root_) / "data" / "reports");
 }
 
@@ -235,11 +248,92 @@ bool ReportManager::sendToTelegram(const std::string& from, const std::string& t
     caption << "Monk SKUD UNEX — отчет посещаемости\nПериод: " << from << " — " << to;
 
     const int retries = std::max(1, cfg_.getInt("telegram.retry_count", 3));
+    bool document_sent = false;
     for (int i = 0; i < retries; ++i) {
-        if (telegram_.sendDocument(report.path, caption.str(), error)) return true;
+        if (telegram_.sendDocument(report.path, caption.str(), error)) { document_sent = true; break; }
         if (i + 1 < retries) std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-    return false;
+    if (!document_sent) return false;
+    if (!cfg_.getBool("telegram.report_text_copy", true)) return true;
+
+    const auto all_users = users_.list();
+    int enabled_users = 0;
+    for (const auto& u : all_users) if (u.enabled) ++enabled_users;
+    int on_site = 0;
+    for (const auto& u : attendance_.presentUsers()) if (u.enabled) ++on_site;
+
+    std::tm from_tm{}, to_tm{};
+    std::time_t from_t{}, to_t{};
+    if (!parseDate(from, from_tm, from_t) || !parseDate(to, to_tm, to_t)) {
+        error = "TXT отправлен, но не удалось подготовить таблицу Telegram";
+        return false;
+    }
+
+    std::vector<std::string> messages;
+    {
+        std::ostringstream summary;
+        summary << "<b>📋 ОТЧЕТ ПО ПОСЕЩАЕМОСТИ</b>\n"
+                << "Период: <b>" << htmlEscape(from) << " — " << htmlEscape(to) << "</b>\n"
+                << "👥 Всего работников: <b>" << enabled_users << "</b>\n"
+                << "🏢 Сейчас на объекте: <b>" << on_site << "</b>";
+        messages.push_back(summary.str());
+    }
+
+    // Telegram limits one message to about 4096 UTF-8 characters.  Split the
+    // table by rows and keep every <pre> block independently valid so a large
+    // staff list cannot make the whole scheduled report fail.
+    constexpr std::size_t kTelegramChunkLimit = 3300;
+    const std::string table_header = "Ст │ Сотрудник │ Должность │ Приход │ Уход │ Состояние\n";
+    for (auto t = from_t; t <= to_t; t = shiftDays(t, 1)) {
+        const auto date = formatDate(t);
+        auto rows = store_.loadDailyAttendance(date);
+        const std::string day_header = "<b>" + htmlEscape(date) + "</b>\n";
+        if (rows.empty()) {
+            messages.push_back(day_header + "<i>Событий посещаемости нет.</i>");
+            continue;
+        }
+
+        std::string chunk = day_header + "<pre>" + table_header;
+        for (auto& row : rows) {
+            if (auto u = users_.byId(row.user_id)) {
+                if (row.user_name.empty()) row.user_name = userName(*u);
+                if (row.position.empty()) row.position = u->position;
+                if (row.department.empty()) row.department = u->department;
+            }
+            const std::string mark = row.presence == PresenceState::Present ? "🟢" : "🔴";
+            const std::string state = row.presence == PresenceState::Present ? "На работе" : "Ушел";
+            std::ostringstream line;
+            line << mark << " │ " << htmlEscape(row.user_name.empty() ? ("Пользователь №" + std::to_string(row.user_id)) : row.user_name)
+                 << " │ " << htmlEscape(row.position.empty() ? "—" : row.position)
+                 << " │ " << htmlEscape(timeOnly(row.arrival_time))
+                 << " │ " << htmlEscape(timeOnly(row.departure_time))
+                 << " │ " << state << "\n";
+            const auto row_text = line.str();
+            if (chunk.size() + row_text.size() + 7 > kTelegramChunkLimit &&
+                chunk.size() > day_header.size() + table_header.size() + 5) {
+                chunk += "</pre>";
+                messages.push_back(chunk);
+                chunk = day_header + "<pre>" + table_header;
+            }
+            chunk += row_text;
+        }
+        chunk += "</pre>";
+        messages.push_back(chunk);
+    }
+
+    for (const auto& message : messages) {
+        bool sent = false;
+        for (int i = 0; i < retries; ++i) {
+            if (telegram_.sendHtml(message, error)) { sent = true; break; }
+            if (i + 1 < retries) std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+        if (!sent) {
+            error = "TXT-файл отправлен, но текстовая таблица Telegram не отправлена: " + error;
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
 
 ReportSchedule ReportManager::schedule() const {

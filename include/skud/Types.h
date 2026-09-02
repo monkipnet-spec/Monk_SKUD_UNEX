@@ -85,7 +85,10 @@ struct AttendanceEvent {
     std::string card;
     int user_id{};
     std::string user_name;
+    std::string position;
     std::string department;
+    bool telegram_arrival{true};
+    bool telegram_departure{true};
     int controller_node{};
     std::string controller_name;
     std::string raw_hex;

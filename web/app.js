@@ -37,7 +37,7 @@ function settingsTab(id){
     const panel=document.getElementById('settings-'+SETTINGS_SECTION);if(panel)panel.classList.remove('hidden');
     if(SETTINGS_SECTION==='controllers'){stopProtocolLivePolling();loadControllers();}
     else if(SETTINGS_SECTION==='live'){startProtocolLive();}
-    else stopProtocolLivePolling();
+    else{stopProtocolLivePolling();loadSettings();}
 }
 
 function formatUptime(total){total=Math.max(0,Math.floor(Number(total)||0));const d=Math.floor(total/86400);total%=86400;const h=Math.floor(total/3600);total%=3600;const m=Math.floor(total/60);const sec=total%60;const clock=[h,m,sec].map(x=>String(x).padStart(2,'0')).join(':');return d>0?d+'д '+clock:clock;}
@@ -844,7 +844,14 @@ async function resetSiteActivity(){
 }
 
 async function importSettings(file){if(!file)return;let text=await file.text();let r=await api('/api/import/settings',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});let j=await r.json();alert(j.ok?'Настройки импортированы. Перезапустите службу.':'Ошибка импорта');}
-settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
+async function loadSettings(){
+    if(!window.settingsForm)return;
+    try{const r=await api('/api/settings');const j=await r.json();
+        settingsForm.username.value=j.username||'admin';settingsForm.port.value=j.port||'8080';settingsForm.serial_device.value=j.serial_device||'auto';settingsForm.bot_token.value=j.bot_token||'';settingsForm.chat_id.value=j.chat_id||'';
+        settingsForm.telegram_enabled.checked=!!j.telegram_enabled;settingsForm.notify_arrival.checked=j.notify_arrival!==false;settingsForm.notify_departure.checked=j.notify_departure!==false;settingsForm.report_text_copy.checked=j.report_text_copy!==false;
+    }catch(e){}
+}
+settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';o.notify_arrival=settingsForm.notify_arrival.checked?'1':'0';o.notify_departure=settingsForm.notify_departure.checked?'1':'0';o.report_text_copy=settingsForm.report_text_copy.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Telegram применён сразу; для изменения HTTP-порта/COM перезапустите службу.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}
 
 function protocolCommandName(cmd){return ({18:'12H Read EEPROM',24:'18H Status',32:'20H Write EEPROM',35:'23H Set Time',36:'24H Read RTC',37:'25H Get Event',55:'37H Delete Event',128:'80H Set Node ID',131:'83H Set User Data',132:'84H Stop Waiting',135:'87H Get User Data'})[Number(cmd)]||('0x'+Number(cmd<0?0:cmd).toString(16).toUpperCase().padStart(2,'0'));}

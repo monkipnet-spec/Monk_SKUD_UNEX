@@ -21,7 +21,7 @@ public:
     AttendanceEngine(UserManager& users, FileStore& store, int repeat_seconds);
     void setNotifier(NotifyFn fn);
     AttendanceEvent onCardRead(const std::string& card, int controller_node, const std::string& controller_name, const std::string& raw_hex="");
-    ControllerEventProcessResult onControllerAccessEvent(const std::string& card,int controller_node,const std::string& controller_name,const std::string& raw_hex,const std::string& event_timestamp);
+    ControllerEventProcessResult onControllerAccessEvent(const std::string& card,int controller_node,const std::string& controller_name,const std::string& raw_hex,const std::string& event_timestamp,bool allow_notification=true);
     void recordRawControllerEvent(int controller_node,const std::string& controller_name,const std::string& raw_hex);
     ControllerEventProcessResult recordControllerRawEvent(int controller_node,const std::string& controller_name,const std::string& raw_hex,const std::string& event_timestamp,const std::string& card="");
     std::vector<CardActivity> activities() const;

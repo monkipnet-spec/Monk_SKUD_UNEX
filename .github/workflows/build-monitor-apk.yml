@@ -1,0 +1,40 @@
+name: Build Monk SKUD Monitor APK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'android/Monk_SKUD_Monitor/**'
+      - '.github/workflows/build-monitor-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Build debug APK
+        run: gradle -p android/Monk_SKUD_Monitor --no-daemon assembleDebug
+      - name: Prepare artifact
+        run: |
+          cp android/Monk_SKUD_Monitor/app/build/outputs/apk/debug/app-debug.apk Monk_SKUD_Monitor_Android5_v1.0.apk
+          sha256sum Monk_SKUD_Monitor_Android5_v1.0.apk > Monk_SKUD_Monitor_Android5_v1.0.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Monk_SKUD_Monitor_Android5_v1.0
+          path: |
+            Monk_SKUD_Monitor_Android5_v1.0.apk
+            Monk_SKUD_Monitor_Android5_v1.0.apk.sha256
+          if-no-files-found: error

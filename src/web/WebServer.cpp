@@ -235,6 +235,71 @@ WebServer::Res WebServer::jsonEepromSearchJob(const ControllerEepromSearchJob&jo
 }
 
 WebServer::Res WebServer::jsonStatus(){auto p=attendance_.presentUsers();const auto registered=users_.list().size();auto m=system_metrics_.snapshot();std::ostringstream o;o<<"{\"serial_status\":\""<<controllers_.serialStatus()<<"\",\"serial_device\":\""<<util::jsonEscape(controllers_.serialDevice())<<"\",\"present_count\":"<<p.size()<<",\"registered_count\":"<<registered<<",\"cpu_percent\":"<<m.cpu_percent<<",\"ram_percent\":"<<m.ram_percent<<",\"ram_used_mb\":"<<m.ram_used_mb<<",\"ram_total_mb\":"<<m.ram_total_mb<<",\"uptime_seconds\":"<<m.uptime_seconds<<"}";return{200,"application/json; charset=utf-8",o.str()};}
+WebServer::Res WebServer::jsonSettings(){
+    std::ostringstream o;
+    o<<"{\"username\":\""<<util::jsonEscape(cfg_.get("auth.username","admin"))<<"\""
+     <<",\"port\":\""<<util::jsonEscape(cfg_.get("server.port","8080"))<<"\""
+     <<",\"serial_device\":\""<<util::jsonEscape(cfg_.get("serial.device","auto"))<<"\""
+     <<",\"telegram_enabled\":"<<(cfg_.getBool("telegram.enabled",false)?"true":"false")
+     <<",\"bot_token\":\""<<util::jsonEscape(cfg_.get("telegram.bot_token"))<<"\""
+     <<",\"chat_id\":\""<<util::jsonEscape(cfg_.get("telegram.chat_id"))<<"\""
+     <<",\"notify_arrival\":"<<(cfg_.getBool("telegram.notify_arrival",true)?"true":"false")
+     <<",\"notify_departure\":"<<(cfg_.getBool("telegram.notify_departure",true)?"true":"false")
+     <<",\"report_text_copy\":"<<(cfg_.getBool("telegram.report_text_copy",true)?"true":"false")
+     <<",\"monitor_path\":\"/monitor.html\"}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
+
+WebServer::Res WebServer::jsonMonitor(){
+    auto all=users_.list();
+    auto present=attendance_.presentUsers();
+    auto today=attendance_.todayAttendance();
+    auto ctrls=controllers_.controllers();
+    std::map<int,bool> present_ids;
+    for(const auto&u:present)present_ids[u.id]=true;
+    std::map<int,DailyAttendance> today_by_user;
+    for(const auto&r:today)today_by_user[r.user_id]=r;
+
+    struct Row{User user;std::string arrival;std::string departure;std::string status;};
+    std::vector<Row> rows;
+    int registered=0,on_site=0;
+    for(const auto&u:all){
+        if(!u.enabled)continue;
+        ++registered;
+        const bool here=present_ids.count(u.id)>0;
+        if(here)++on_site;
+        Row row;row.user=u;
+        auto it=today_by_user.find(u.id);
+        if(it!=today_by_user.end()){row.arrival=it->second.arrival_time;row.departure=it->second.departure_time;}
+        row.status=here?"at_work":(it!=today_by_user.end()?"left":"absent");
+        rows.push_back(std::move(row));
+    }
+    std::sort(rows.begin(),rows.end(),[](const Row&a,const Row&b){
+        auto rank=[](const std::string&s){return s=="at_work"?0:s=="left"?1:2;};
+        const int ar=rank(a.status),br=rank(b.status);if(ar!=br)return ar<br;
+        if(a.user.department!=b.user.department)return a.user.department<b.user.department;
+        if(a.user.last_name!=b.user.last_name)return a.user.last_name<b.user.last_name;
+        return a.user.first_name<b.user.first_name;
+    });
+    int online=0,enabled_ctrl=0;for(const auto&c:ctrls)if(c.enabled){++enabled_ctrl;if(c.online)++online;}
+    std::ostringstream o;
+    o<<"{\"generated_at\":\""<<util::jsonEscape(util::nowLocal())<<"\",\"date\":\""<<util::jsonEscape(util::todayLocal())
+     <<"\",\"registered_count\":"<<registered<<",\"present_count\":"<<on_site
+     <<",\"controllers_online\":"<<online<<",\"controllers_total\":"<<enabled_ctrl<<",\"workers\":[";
+    bool first=true;
+    for(const auto&r:rows){
+        if(!first)o<<',';first=false;
+        std::string name=r.user.last_name;
+        if(!r.user.first_name.empty()){if(!name.empty())name+=' ';name+=r.user.first_name;}
+        if(!r.user.middle_name.empty()){if(!name.empty())name+=' ';name+=r.user.middle_name;}
+        if(name.empty())name="Пользователь №"+std::to_string(r.user.id);
+        o<<"{\"id\":"<<r.user.id<<",\"name\":\""<<util::jsonEscape(name)<<"\",\"position\":\""<<util::jsonEscape(r.user.position)
+         <<"\",\"department\":\""<<util::jsonEscape(r.user.department)<<"\",\"arrival_time\":\""<<util::jsonEscape(r.arrival)
+         <<"\",\"departure_time\":\""<<util::jsonEscape(r.departure)<<"\",\"status\":\""<<r.status<<"\"}";
+    }
+    o<<"]}";
+    return{200,"application/json; charset=utf-8",o.str()};
+}
 WebServer::Res WebServer::jsonReportSettings(){
     const auto today=reports_.todayRange(),week=reports_.currentWeekRange(),month=reports_.currentMonthRange();
     const auto s=reports_.schedule();
@@ -259,6 +324,12 @@ WebServer::Res WebServer::jsonProtocolTrace(std::uint64_t after_id,std::size_t l
     o<<"],\"last_id\":"<<last<<"}";return{200,"application/json; charset=utf-8",o.str()};
 }
 WebServer::Res WebServer::route(const Req&r){
+    // Read-only TV/kiosk monitor is intentionally available without an admin session.
+    // It exposes attendance status/name/position only; no cards, PINs or credentials.
+    if(r.path=="/monitor"||r.path=="/monitor.html")return file("monitor.html","text/html; charset=utf-8");
+    if(r.path=="/monitor.css")return file("monitor.css","text/css; charset=utf-8");
+    if(r.path=="/monitor.js")return file("monitor.js","application/javascript; charset=utf-8");
+    if(r.path=="/api/monitor"&&r.method=="GET")return jsonMonitor();
     if(r.path=="/api/login"&&r.method=="POST"){auto f=util::parseForm(r.body);auto salt=cfg_.get("auth.salt");auto hash=util::sha256Hex(salt+f["password"]);if(f["username"]==cfg_.get("auth.username","admin")&&util::constantTimeEqual(hash,cfg_.get("auth.password_hash"))){auto sid=util::randomToken();{std::lock_guard lk(sessions_mu_);sessions_[sid]=f["username"];}Res x{200,"application/json","{\"ok\":true}"};x.headers.push_back({"Set-Cookie","SKUDSID="+sid+"; Path=/; HttpOnly; SameSite=Strict"});return x;}return{401,"application/json","{\"ok\":false}"};}
     if(r.path=="/login.html")return file("login.html","text/html; charset=utf-8");
     if(r.path=="/style.css")return file("style.css","text/css; charset=utf-8");
@@ -612,7 +683,8 @@ WebServer::Res WebServer::route(const Req&r){
         if(!ok)return{500,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"Не удалось очистить текущее состояние активности в хранилище\"}"};
         return{200,"application/json; charset=utf-8","{\"ok\":true,\"present_count\":0}"};
     }
-    if(r.path=="/api/settings/save"&&r.method=="POST"){auto f=util::parseForm(r.body);if(!f["username"].empty())cfg_.set("auth.username",f["username"]);if(!f["password"].empty()){auto salt=util::randomToken(16);cfg_.set("auth.salt",salt);cfg_.set("auth.password_hash",util::sha256Hex(salt+f["password"]));}if(!f["port"].empty())cfg_.set("server.port",f["port"]);if(!f["serial_device"].empty())cfg_.set("serial.device",f["serial_device"]);cfg_.set("telegram.enabled",f["telegram_enabled"]=="1"?"true":"false");cfg_.set("telegram.bot_token",f["bot_token"]);cfg_.set("telegram.chat_id",f["chat_id"]);cfg_.save();return{200,"application/json","{\"ok\":true,\"restart_required\":true}"};}
+    if(r.path=="/api/settings"&&r.method=="GET")return jsonSettings();
+    if(r.path=="/api/settings/save"&&r.method=="POST"){auto f=util::parseForm(r.body);if(!f["username"].empty())cfg_.set("auth.username",f["username"]);if(!f["password"].empty()){auto salt=util::randomToken(16);cfg_.set("auth.salt",salt);cfg_.set("auth.password_hash",util::sha256Hex(salt+f["password"]));}if(!f["port"].empty())cfg_.set("server.port",f["port"]);if(!f["serial_device"].empty())cfg_.set("serial.device",f["serial_device"]);cfg_.set("telegram.enabled",f["telegram_enabled"]=="1"?"true":"false");cfg_.set("telegram.bot_token",f["bot_token"]);cfg_.set("telegram.chat_id",f["chat_id"]);cfg_.set("telegram.notify_arrival",f["notify_arrival"]=="1"?"true":"false");cfg_.set("telegram.notify_departure",f["notify_departure"]=="1"?"true":"false");cfg_.set("telegram.report_text_copy",f["report_text_copy"]=="1"?"true":"false");if(!cfg_.save())return{500,"application/json","{\"ok\":false,\"error\":\"save failed\"}"};return{200,"application/json","{\"ok\":true,\"restart_required\":true}"};}
     return{404,"application/json","{\"error\":\"not found\"}"};
 }
 }

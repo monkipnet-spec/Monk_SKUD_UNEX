@@ -634,7 +634,7 @@ void ControllerManager::processOneControllerAction(Unex721Protocol& proto){
     }
 }
 
-bool ControllerManager::handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed){
+bool ControllerManager::handleControllerEvent(Unex721Protocol& proto,int node,const RawUnexEvent& evt,bool& duplicate,bool& removed,bool allow_notification){
     duplicate=false;removed=false;
     bool log_semantic=false;
     {
@@ -670,7 +670,7 @@ bool ControllerManager::handleControllerEvent(Unex721Protocol& proto,int node,co
 
     AttendanceEngine::ControllerEventProcessResult processed;
     if(evt.event_code==0x0B&&!evt.card.empty())
-        processed=attendance_.onControllerAccessEvent(evt.card,node,cname,evt.raw_hex,evt.event_timestamp);
+        processed=attendance_.onControllerAccessEvent(evt.card,node,cname,evt.raw_hex,evt.event_timestamp,allow_notification);
     else
         processed=attendance_.recordControllerRawEvent(node,cname,evt.raw_hex,evt.event_timestamp,evt.card);
 
@@ -733,7 +733,7 @@ int ControllerManager::processAttendanceReadBatch(Unex721Protocol& proto){
         }
 
         bool duplicate=false,removed=false;
-        const bool stored=handleControllerEvent(proto,pending.controller_node,*evt,duplicate,removed);
+        const bool stored=handleControllerEvent(proto,pending.controller_node,*evt,duplicate,removed,false);
         {
             std::lock_guard lk(attendance_read_mu_);
             auto it=attendance_read_jobs_.find(pending.id);if(it!=attendance_read_jobs_.end()){
