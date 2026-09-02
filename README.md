@@ -577,3 +577,10 @@ Read-only real-time dashboard: `http://SERVER_IP:PORT/monitor.html` (updates eve
 Android 5.0+ kiosk source is in `android/Monk_SKUD_Monitor`. It stores the dashboard URL,
 runs full-screen/landscape, keeps the display awake and requests autostart after device boot.
 The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the APK artifact.
+
+## TV monitor v0.3.26
+- Compact monitor header (about 1/3 of previous height).
+- Reduced monitor typography for TV dashboards.
+- Cyclic automatic employee-list scrolling when rows do not fit on screen.
+- 3-second realtime refresh is retained without full-page reload.
+- Monitor JavaScript/CSS avoids modern-only Fetch/async and CSS Grid so older Android 5 WebView installations have a better compatibility path.

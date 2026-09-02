@@ -107,3 +107,16 @@ v0.3.24 checks:
 - Valid 0BH event counted as access; 03H invalid-card event stored as raw diagnostic: PASS
 - FIFO safety: event is not deleted if local persistence fails
 - Web cache revision: v=0324
+
+v0.3.26 checks:
+- Release CMake build: PASS
+- web/monitor.js syntax: PASS
+- web/app.js syntax: PASS
+- Monitor header visual height reduced to roughly one third of v0.3.25.
+- Monitor page typography reduced for higher worker-row density on TV screens.
+- Employee list cyclic auto-scroll added; it activates only when the table overflows vertically.
+- Auto-scroll: 20 px/s downward, pause at bottom, return to top, pause, repeat.
+- Manual touch/mouse/wheel interaction pauses auto-scroll for 6 seconds.
+- Monitor refresh remains 3 seconds and preserves scroll position when worker data changes.
+- monitor.js rewritten to ES5 + XMLHttpRequest; monitor layout uses Flexbox instead of CSS Grid for older Android 5 WebView compatibility.
+- Web cache revision: v=0326
