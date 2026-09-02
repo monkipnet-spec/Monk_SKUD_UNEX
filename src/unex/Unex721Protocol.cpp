@@ -51,6 +51,18 @@ std::string hAccessModeFromByte(std::uint8_t mode){
 std::string bytesHex(const std::vector<std::uint8_t>& bytes){
     return util::hex(bytes);
 }
+
+std::string hEventTimestamp(const std::vector<std::uint8_t>& f){
+    // H-series 25H: Data0..Data6 are SS, MM, HH, weekday, DD, MM, YY.
+    // Values are numeric bytes (for example 0x37 = 55 minutes, 0x1A = year 26).
+    if(f.size()<12)return {};
+    const int sec=f[5],min=f[6],hour=f[7],day=f[9],month=f[10],year=2000+f[11];
+    if(sec<0||sec>59||min<0||min>59||hour<0||hour>23||day<1||day>31||month<1||month>12||year<2000||year>2099)return {};
+    std::ostringstream o;
+    o<<std::setfill('0')<<std::setw(4)<<year<<'-'<<std::setw(2)<<month<<'-'<<std::setw(2)<<day
+     <<' '<<std::setw(2)<<hour<<':'<<std::setw(2)<<min<<':'<<std::setw(2)<<sec;
+    return o.str();
+}
 }
 
 std::vector<std::uint8_t> Unex721Protocol::frame(std::uint8_t node,std::uint8_t cmd,const std::vector<std::uint8_t>&data){
@@ -569,6 +581,7 @@ RawUnexEvent Unex721Protocol::decodeEvent(std::uint8_t node,const std::vector<st
         // frame[19..20]      = Site Code
         // frame[23..24]      = Card Code
         e.event_code=f[3];
+        e.event_timestamp=hEventTimestamp(f);
         e.user_address=(static_cast<int>(f[13])<<8)|f[14];
         const std::uint16_t series=(static_cast<std::uint16_t>(f[19])<<8)|f[20];
         const std::uint16_t number=(static_cast<std::uint16_t>(f[23])<<8)|f[24];

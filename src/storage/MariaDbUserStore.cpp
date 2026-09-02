@@ -115,7 +115,25 @@ bool MariaDbUserStore::saveControllers(const std::vector<Controller>& controller
 }
 
 bool MariaDbUserStore::appendEvent(const AttendanceEvent& e,std::string& error,const std::string& source_salt){
-    std::lock_guard lk(mu_);if(!connectLocked(error))return false;auto*c=static_cast<MYSQL*>(conn_);const auto type=eventTypeText(e.type);const auto salt=source_salt.empty()?util::randomToken(12):source_salt;const auto source=util::sha256Hex(e.timestamp+"|"+type+"|"+e.card+"|"+std::to_string(e.user_id)+"|"+std::to_string(e.controller_node)+"|"+e.raw_hex+"|"+salt);std::ostringstream q;q<<"INSERT IGNORE INTO skud_attendance_events(source_key,timestamp,type,card,user_id,user_name,department,controller_node,controller_name,raw_hex) VALUES('"<<source<<"','"<<escLocked(e.timestamp)<<"','"<<type<<"','"<<escLocked(e.card)<<"',"<<e.user_id<<",'"<<escLocked(e.user_name)<<"','"<<escLocked(e.department)<<"',"<<e.controller_node<<",'"<<escLocked(e.controller_name)<<"','"<<escLocked(e.raw_hex)<<"')";if(mysql_query(c,q.str().c_str())!=0){error=mysql_error(c);return false;}return true;
+    std::lock_guard lk(mu_);if(!connectLocked(error))return false;auto*c=static_cast<MYSQL*>(conn_);const auto type=eventTypeText(e.type);
+    // Controller FIFO frames are stable across retries. Use a deterministic
+    // source key so an event written to MariaDB but not yet deleted by 37H is
+    // harmless when it is read again after a restart.
+    std::string source;
+    if(source_salt.empty()&&!e.raw_hex.empty()&&e.controller_node>0)
+        source=util::sha256Hex("controller|"+std::to_string(e.controller_node)+"|"+e.raw_hex);
+    else{
+        const auto salt=source_salt.empty()?util::randomToken(12):source_salt;
+        source=util::sha256Hex(e.timestamp+"|"+type+"|"+e.card+"|"+std::to_string(e.user_id)+"|"+std::to_string(e.controller_node)+"|"+e.raw_hex+"|"+salt);
+    }
+    std::ostringstream q;q<<"INSERT IGNORE INTO skud_attendance_events(source_key,timestamp,type,card,user_id,user_name,department,controller_node,controller_name,raw_hex) VALUES('"<<source<<"','"<<escLocked(e.timestamp)<<"','"<<type<<"','"<<escLocked(e.card)<<"',"<<e.user_id<<",'"<<escLocked(e.user_name)<<"','"<<escLocked(e.department)<<"',"<<e.controller_node<<",'"<<escLocked(e.controller_name)<<"','"<<escLocked(e.raw_hex)<<"')";if(mysql_query(c,q.str().c_str())!=0){error=mysql_error(c);return false;}return true;
+}
+
+bool MariaDbUserStore::hasControllerEvent(int controller_node,const std::string& raw_hex,bool& exists,std::string& error){
+    exists=false;if(raw_hex.empty())return true;
+    std::lock_guard lk(mu_);if(!connectLocked(error))return false;auto*c=static_cast<MYSQL*>(conn_);
+    std::ostringstream q;q<<"SELECT 1 FROM skud_attendance_events WHERE controller_node="<<controller_node<<" AND raw_hex='"<<escLocked(raw_hex)<<"' LIMIT 1";
+    if(mysql_query(c,q.str().c_str())!=0){error=mysql_error(c);return false;}auto*res=mysql_store_result(c);if(!res){error=mysql_error(c);return false;}exists=mysql_num_rows(res)>0;mysql_free_result(res);return true;
 }
 bool MariaDbUserStore::loadEventsByDate(const std::string& date,std::vector<AttendanceEvent>& out,std::string& error){
     std::lock_guard lk(mu_);if(!connectLocked(error))return false;auto*c=static_cast<MYSQL*>(conn_);const auto prefix=escLocked(date)+"%";std::string q="SELECT timestamp,type,card,user_id,user_name,department,controller_node,controller_name,raw_hex FROM skud_attendance_events WHERE timestamp LIKE '"+prefix+"' ORDER BY timestamp,id";if(mysql_query(c,q.c_str())!=0){error=mysql_error(c);return false;}auto*res=mysql_store_result(c);if(!res){error=mysql_error(c);return false;}out.clear();MYSQL_ROW r;while((r=mysql_fetch_row(res))){AttendanceEvent e;e.timestamp=nullable(r[0]);e.type=eventTypeFromText(nullable(r[1]));e.card=nullable(r[2]);e.user_id=toInt(r[3]);e.user_name=nullable(r[4]);e.department=nullable(r[5]);e.controller_node=toInt(r[6]);e.controller_name=nullable(r[7]);e.raw_hex=nullable(r[8]);out.push_back(std::move(e));}mysql_free_result(res);return true;

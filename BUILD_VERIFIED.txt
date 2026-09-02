@@ -61,3 +61,15 @@ v0.3.20 checks:
 - Site activity reset clears current attendance state and active-card cache only
 - Attendance event history, reports, users and controller-card catalog are preserved
 - Web cache revision: v=0320
+
+
+v0.3.21 checks:
+- Release CMake build: PASS
+- web/app.js syntax: PASS
+- Historical FIFO fixture: PASS (08:00 arrival, 08:00:03 accidental, 12:00 departure, 12:30 return, 18:00 final departure)
+- Historical event date storage: PASS (2026-09-01 controller events stored in 2026-09-01.csv, not current-day CSV)
+- RAW-frame retry dedup fixture: PASS (same controller RAW does not toggle state twice)
+- Invalid/raw controller event persistence: PASS; does not participate in daily arrival/departure aggregation
+- FIFO safety: 37H is skipped when local persistence fails
+- UI: Controllers and Live protocol are nested in Settings; standalone top-nav entries removed
+- Web cache revision: v=0321

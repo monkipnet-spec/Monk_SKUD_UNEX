@@ -67,7 +67,21 @@ bool FileStore::migrateLegacyRuntime(std::string& error){
 
 bool FileStore::appendEvent(const AttendanceEvent&e){
     if(usingMariaDb()){if(!db_)return false;std::string err;const bool ok=db_->appendEvent(e,err);if(!ok){std::lock_guard lk(storage_mu_);storage_error_=err;}return ok;}
-    std::lock_guard lk(mu_);auto p=root_+"/data/events/"+util::todayLocal()+".csv";bool exists=std::filesystem::exists(p);std::ofstream f(p,std::ios::app);if(!f)return false;if(!exists)f<<"timestamp;type;card;user_id;user_name;department;controller_node;controller_name;raw_hex\n";std::string t="raw";if(e.type==AttendanceEventType::Arrival)t="arrival";else if(e.type==AttendanceEventType::Departure)t="departure";else if(e.type==AttendanceEventType::Accidental)t="accidental";else if(e.type==AttendanceEventType::UnknownCard)t="unknown_card";f<<safe(e.timestamp)<<';'<<t<<';'<<safe(e.card)<<';'<<e.user_id<<';'<<safe(e.user_name)<<';'<<safe(e.department)<<';'<<e.controller_node<<';'<<safe(e.controller_name)<<';'<<safe(e.raw_hex)<<"\n";return true;
+    // Historical 25H events must be stored under the date reported by the
+    // controller, not under the day on which the server happened to read FIFO.
+    std::string event_date=util::todayLocal();if(e.timestamp.size()>=10&&e.timestamp[4]=='-'&&e.timestamp[7]=='-')event_date=e.timestamp.substr(0,10);
+    std::lock_guard lk(mu_);auto p=root_+"/data/events/"+event_date+".csv";bool exists=std::filesystem::exists(p);std::ofstream f(p,std::ios::app);if(!f)return false;if(!exists)f<<"timestamp;type;card;user_id;user_name;department;controller_node;controller_name;raw_hex\n";std::string t="raw";if(e.type==AttendanceEventType::Arrival)t="arrival";else if(e.type==AttendanceEventType::Departure)t="departure";else if(e.type==AttendanceEventType::Accidental)t="accidental";else if(e.type==AttendanceEventType::UnknownCard)t="unknown_card";f<<safe(e.timestamp)<<';'<<t<<';'<<safe(e.card)<<';'<<e.user_id<<';'<<safe(e.user_name)<<';'<<safe(e.department)<<';'<<e.controller_node<<';'<<safe(e.controller_name)<<';'<<safe(e.raw_hex)<<"\n";return true;
+}
+
+bool FileStore::hasControllerEvent(int controller_node,const std::string& raw_hex,const std::string& event_timestamp)const{
+    if(raw_hex.empty())return false;
+    if(usingMariaDb()){
+        if(!db_)return false;std::string err;bool exists=false;
+        if(!db_->hasControllerEvent(controller_node,raw_hex,exists,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return false;}return exists;
+    }
+    std::string event_date=util::todayLocal();if(event_timestamp.size()>=10&&event_timestamp[4]=='-'&&event_timestamp[7]=='-')event_date=event_timestamp.substr(0,10);
+    std::lock_guard lk(mu_);std::ifstream f(root_+"/data/events/"+event_date+".csv");std::string line;bool first=true;while(std::getline(f,line)){if(first){first=false;continue;}auto c=util::split(line,';');if(c.size()<9)continue;try{if(std::stoi(c[6])==controller_node&&c[8]==raw_hex)return true;}catch(...){}}
+    return false;
 }
 
 bool FileStore::saveCardStates(const std::map<std::string,PersistedCardState>&s){

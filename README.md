@@ -531,3 +531,14 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - В `Настройки` добавлена кнопка **«Сбросить активность на объекте»**.
 - Сброс очищает только текущее состояние присутствия и кэш `active_cards`; следующий проход пользователя снова считается приходом.
 - Исторический журнал посещаемости, «Активность за сегодня», отчёты, пользователи и постоянный каталог карт контроллеров не удаляются.
+
+
+## v0.3.21 — historical controller FIFO import + settings UI consolidation
+
+- Standard H-series `25H` events now decode the original controller date/time (`SS MM HH WD DD MO YY`) and persist attendance with that timestamp instead of server receive time.
+- Accidental-repeat filtering uses the decoded controller event timestamp, so a backlog drained in milliseconds is not falsely collapsed by the 5-second debounce window.
+- Only `0BH Normal Access` changes arrival/departure state. `03H Invalid Card` and other controller events are preserved as raw diagnostics but do not toggle attendance.
+- FIFO events are removed by `37H` only after durable local storage succeeds. If storage fails, the oldest controller event is left in FIFO for retry.
+- Controller RAW frames are deduplicated before state mutation. MariaDB also uses a deterministic controller-event source key, preventing a restart between database insert and `37H` from creating a second attendance transition.
+- CSV fallback storage writes historical events into the file matching the controller event date instead of the server's current date.
+- `Контроллеры` and `Live протокол` were removed from the top navigation and moved into `Настройки`; opening Settings loads controllers and starts Live protocol polling.

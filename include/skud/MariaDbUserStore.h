@@ -26,6 +26,7 @@ public:
     bool saveControllers(const std::vector<Controller>& controllers,std::string& error);
 
     bool appendEvent(const AttendanceEvent& event,std::string& error,const std::string& source_salt={});
+    bool hasControllerEvent(int controller_node,const std::string& raw_hex,bool& exists,std::string& error);
     bool loadEventsByDate(const std::string& date,std::vector<AttendanceEvent>& events,std::string& error);
 
     bool loadCardStates(std::map<std::string,PersistedCardState>& states,std::string& error);

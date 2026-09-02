@@ -229,6 +229,9 @@ struct RawUnexEvent {
     std::string card; // filled when the event decoder can determine the card
     int user_address{-1};
     int event_code{-1};
+    // Original controller timestamp decoded from standard H-series 25H.
+    // Empty when the event format does not expose a valid date/time.
+    std::string event_timestamp;
 };
 
 } // namespace skud

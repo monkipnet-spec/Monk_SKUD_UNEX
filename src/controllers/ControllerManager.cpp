@@ -642,18 +642,17 @@ void ControllerManager::loop(){
                 bool log_semantic=false;{std::lock_guard lk(trace_mu_);if(last_event_trace_raw_!=evt->raw_hex){last_event_trace_raw_=evt->raw_hex;log_semantic=true;}}
                 if(log_semantic){
                     std::string msg="Событие контроллера";
+                    if(evt->event_code==0x0B)msg+=" · Normal Access";else if(evt->event_code==0x03)msg+=" · Invalid Card";
+                    if(!evt->event_timestamp.empty())msg+=", время контроллера="+evt->event_timestamp;
                     if(evt->user_address>=0)msg+=", адрес пользователя="+std::to_string(evt->user_address);
                     if(evt->card.empty())msg+=", карта пока не декодирована";
                     appendProtocolTrace("EVENT",node,0x25,"semantic",evt->frame,msg,evt->card,evt->user_address);
-
-                    // Never let an undecoded record block the controller FIFO forever.
-                    // Preserve the full RAW frame locally before acknowledging/removing it.
-                    if(evt->card.empty())attendance_.recordRawControllerEvent(node,cname,evt->raw_hex);
                 }
                 if(cb)cb(*evt);
+
+                // Every decoded physical card is useful for onboarding, including an
+                // invalid card.  Attendance, however, changes only on 0BH Normal Access.
                 if(!evt->card.empty()){
-                    // v0.3.4 card onboarding: every confirmed real 25H card is kept in
-                    // a persistent controller inventory, independent of attendance.
                     rememberControllerCard(evt->card,node,cname,evt->raw_hex);
                     if(cfg_.getBool("cards.auto_create_unknown",false)&&!users_.byCard(evt->card)){
                         if(auto created=users_.ensureUserForCard(evt->card)){
@@ -661,16 +660,30 @@ void ControllerManager::loop(){
                             appendProtocolTrace("INFO",node,0x25,"semantic",{},"Новая карта автоматически добавлена как пользователь №"+std::to_string(created->id),evt->card);
                         }
                     }
-                    attendance_.onCardRead(evt->card,node,cname,evt->raw_hex);
                 }
 
-                // 25H always returns the oldest FIFO record.  It must be removed after
-                // being copied locally, otherwise the same record hides every newer card
-                // event behind it (observed on the real UNEX 721).
+                AttendanceEngine::ControllerEventProcessResult processed;
+                if(evt->event_code==0x0B&&!evt->card.empty())
+                    processed=attendance_.onControllerAccessEvent(evt->card,node,cname,evt->raw_hex,evt->event_timestamp);
+                else
+                    processed=attendance_.recordControllerRawEvent(node,cname,evt->raw_hex,evt->event_timestamp,evt->card);
+
+                if(!processed.stored){
+                    // Do NOT acknowledge/remove a FIFO record before durable storage.
+                    // Leaving it as the oldest event makes the controller retry it later.
+                    appendProtocolTrace("INFO",node,0x25,"semantic",{},"Событие НЕ удалено из FIFO: не удалось сохранить его в локальное хранилище",evt->card,evt->user_address);
+                    std::this_thread::sleep_for(300ms);
+                    continue;
+                }
+                if(processed.duplicate&&log_semantic)
+                    appendProtocolTrace("INFO",node,0x25,"semantic",{},"Повтор уже сохранённого FIFO-события: состояние посещаемости повторно не изменялось",evt->card,evt->user_address);
+
+                // 25H always returns the oldest FIFO record. Remove it only after the
+                // event is durably stored (or proven to be an already stored duplicate).
                 const bool removed=proto.removeOldestEvent((std::uint8_t)node);
                 if(log_semantic){
                     appendProtocolTrace("INFO",node,0x37,"semantic",{},
-                        removed?(evt->card.empty()?"RAW сохранён; старое нераспознанное событие удалено из FIFO":"Событие обработано и удалено из FIFO")
+                        removed?(processed.duplicate?"Дубликат уже был в БД; событие удалено из FIFO":"Событие сохранено с временем контроллера и удалено из FIFO")
                                :"Не удалось удалить старейшее событие из FIFO; оно будет прочитано повторно");
                 }
             }

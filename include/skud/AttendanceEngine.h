@@ -13,10 +13,17 @@ class UserManager;
 class AttendanceEngine {
 public:
     using NotifyFn = std::function<void(const AttendanceEvent&)>;
+    struct ControllerEventProcessResult {
+        AttendanceEvent event;
+        bool stored{false};      // true when already present or successfully persisted
+        bool duplicate{false};   // same controller RAW frame was already stored
+    };
     AttendanceEngine(UserManager& users, FileStore& store, int repeat_seconds);
     void setNotifier(NotifyFn fn);
     AttendanceEvent onCardRead(const std::string& card, int controller_node, const std::string& controller_name, const std::string& raw_hex="");
+    ControllerEventProcessResult onControllerAccessEvent(const std::string& card,int controller_node,const std::string& controller_name,const std::string& raw_hex,const std::string& event_timestamp);
     void recordRawControllerEvent(int controller_node,const std::string& controller_name,const std::string& raw_hex);
+    ControllerEventProcessResult recordControllerRawEvent(int controller_node,const std::string& controller_name,const std::string& raw_hex,const std::string& event_timestamp,const std::string& card="");
     std::vector<CardActivity> activities() const;
     std::vector<User> presentUsers() const;
     std::vector<DailyAttendance> todayAttendance() const;

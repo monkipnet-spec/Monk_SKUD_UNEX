@@ -35,33 +35,72 @@ AttendanceEngine::AttendanceEngine(UserManager& users, FileStore& store, int rep
 void AttendanceEngine::setNotifier(NotifyFn fn){std::lock_guard lk(mu_);notifier_=std::move(fn);}
 std::chrono::system_clock::time_point AttendanceEngine::parseTime(const std::string&s,bool&ok){std::tm tm{};std::istringstream in(s);in>>std::get_time(&tm,"%Y-%m-%d %H:%M:%S");ok=!in.fail();if(!ok)return{};return std::chrono::system_clock::from_time_t(std::mktime(&tm));}
 AttendanceEvent AttendanceEngine::onCardRead(const std::string&card,int node,const std::string&controller,const std::string&raw){
-    const auto now=std::chrono::system_clock::now();const auto ts=util::nowLocal();AttendanceEvent e;e.timestamp=ts;e.card=card;e.controller_node=node;e.controller_name=controller;e.raw_hex=raw;
+    return onControllerAccessEvent(card,node,controller,raw,util::nowLocal()).event;
+}
+
+AttendanceEngine::ControllerEventProcessResult AttendanceEngine::onControllerAccessEvent(const std::string&card,int node,const std::string&controller,const std::string&raw,const std::string&event_timestamp){
+    ControllerEventProcessResult result;
+    std::string ts=event_timestamp;
+    bool event_time_ok=false;
+    auto event_time=parseTime(ts,event_time_ok);
+    if(!event_time_ok){ts=util::nowLocal();event_time=parseTime(ts,event_time_ok);}
+
+    AttendanceEvent e;e.timestamp=ts;e.card=card;e.controller_node=node;e.controller_name=controller;e.raw_hex=raw;
+    result.event=e;
+
+    // 25H keeps the same oldest frame until 37H succeeds.  Check before any
+    // attendance-state mutation so a restart between DB insert and FIFO delete
+    // cannot turn the same physical access into a second arrival/departure.
+    if(!raw.empty()&&store_.hasControllerEvent(node,raw,ts)){
+        result.stored=true;result.duplicate=true;return result;
+    }
+
     NotifyFn notify;
     {
         std::lock_guard lk(mu_);
         auto user=users_.byCard(card);
         if(user){e.user_id=user->id;e.user_name=user->last_name+" "+user->first_name;e.department=user->department;}else e.type=AttendanceEventType::UnknownCard;
         const std::string state_key=user?userStateKey(user->id):cardStateKey(card);
-        auto& st=states_[state_key];bool accidental=false;
-        if(st.has_last){auto sec=std::chrono::duration_cast<std::chrono::seconds>(now-st.last_read).count();accidental=sec<=repeat_seconds_;}
-        // Every physical read moves last_read. Thus only > repeat_seconds from
-        // the immediately previous read changes the state of the USER.
-        st.last_read=now;st.has_last=true;st.last_read_text=ts;
+        auto& st=states_[state_key];
+        bool accidental=false;
+        if(st.has_last&&event_time_ok){
+            const auto sec=std::chrono::duration_cast<std::chrono::seconds>(event_time-st.last_read).count();
+            // Historical FIFO is drained much faster than real time.  Compare
+            // controller event timestamps, not server processing speed.
+            accidental=sec>=0&&sec<=repeat_seconds_;
+        }
+
+        PresenceState next_presence=st.presence;
         if(user&&user->enabled){
             if(accidental)e.type=AttendanceEventType::Accidental;
-            else if(st.presence==PresenceState::Absent){st.presence=PresenceState::Present;e.type=AttendanceEventType::Arrival;}
-            else{st.presence=PresenceState::Absent;e.type=AttendanceEventType::Departure;}
+            else if(st.presence==PresenceState::Absent){next_presence=PresenceState::Present;e.type=AttendanceEventType::Arrival;}
+            else{next_presence=PresenceState::Absent;e.type=AttendanceEventType::Departure;}
         }
+
+        // Persist the attendance event before changing the durable presence
+        // state.  ControllerManager will not issue 37H if this insert fails.
+        if(!store_.appendEvent(e)){result.event=e;result.stored=false;return result;}
+
+        st.presence=next_presence;st.last_read=event_time;st.has_last=event_time_ok;st.last_read_text=ts;
         auto& a=activities_[card];a.card=card;a.user_id=e.user_id;a.user_name=e.user_name;a.department=e.department;a.last_read=ts;a.controller_node=node;
         if(e.type==AttendanceEventType::Arrival)a.last_event="Приход";else if(e.type==AttendanceEventType::Departure)a.last_event="Уход";else if(e.type==AttendanceEventType::Accidental)a.last_event="Случайное повторное";else a.last_event="Неизвестная карта";
         persistLocked();notify=notifier_;
     }
-    store_.appendEvent(e);
+    result.event=e;result.stored=true;
     if(notify&&(e.type==AttendanceEventType::Arrival||e.type==AttendanceEventType::Departure))notify(e);
-    return e;
+    return result;
 }
+
 void AttendanceEngine::recordRawControllerEvent(int node,const std::string&controller,const std::string&raw){
-    AttendanceEvent e;e.timestamp=util::nowLocal();e.type=AttendanceEventType::RawControllerEvent;e.controller_node=node;e.controller_name=controller;e.raw_hex=raw;store_.appendEvent(e);
+    (void)recordControllerRawEvent(node,controller,raw,util::nowLocal());
+}
+
+AttendanceEngine::ControllerEventProcessResult AttendanceEngine::recordControllerRawEvent(int node,const std::string&controller,const std::string&raw,const std::string&event_timestamp,const std::string&card){
+    ControllerEventProcessResult result;
+    AttendanceEvent e;e.timestamp=event_timestamp.empty()?util::nowLocal():event_timestamp;e.type=AttendanceEventType::RawControllerEvent;e.card=card;e.controller_node=node;e.controller_name=controller;e.raw_hex=raw;
+    result.event=e;
+    if(!raw.empty()&&store_.hasControllerEvent(node,raw,e.timestamp)){result.stored=true;result.duplicate=true;return result;}
+    result.stored=store_.appendEvent(e);return result;
 }
 void AttendanceEngine::persistLocked(){std::map<std::string,PersistedCardState> p;for(auto&[key,s]:states_)p[key]={s.presence,s.last_read_text};store_.saveCardStates(p);std::vector<CardActivity>a;for(auto&[_,x]:activities_)a.push_back(x);store_.saveActivities(a);}
 std::vector<CardActivity> AttendanceEngine::activities()const{std::lock_guard lk(mu_);std::vector<CardActivity>v;for(auto it=activities_.rbegin();it!=activities_.rend();++it)v.push_back(it->second);return v;}

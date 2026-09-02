@@ -15,6 +15,7 @@ public:
     ~FileStore();
     bool init(std::string& error);
     bool appendEvent(const AttendanceEvent& e);
+    bool hasControllerEvent(int controller_node,const std::string& raw_hex,const std::string& event_timestamp={}) const;
     bool saveCardStates(const std::map<std::string,PersistedCardState>& states);
     std::map<std::string,PersistedCardState> loadCardStates() const;
     bool saveActivities(const std::vector<CardActivity>& activities);
