@@ -146,3 +146,11 @@ v0.3.30 checks:
 - Emoji markers kept outside monospace columns: added.
 - Report summary: total / active / on-site / off-site counts.
 - Daily ordering: present employees first, then departed; stable name ordering.
+
+
+v0.3.31 checks:
+- Telegram table visual layout restored to v0.3.29 style.
+- One valid <pre> block per Telegram chunk.
+- Full employee names/positions retained; no v0.3.30 clipping.
+- UTF-8-aware dynamic header/data column widths.
+- Telegram summary restored to total workers + current on-site count; TXT document delivery retained.

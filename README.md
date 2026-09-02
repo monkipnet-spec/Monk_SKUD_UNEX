@@ -608,3 +608,9 @@ The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the
 - Status marker is rendered outside the monospace code span, so 🟢/🔴 emoji width does not break table columns.
 - Report summary now shows total workers, active workers when different, current on-site count and off-site count.
 - Each report day shows its own "На работе / Ушли" totals and rows are ordered with currently present employees first.
+
+
+### v0.3.31
+- Telegram attendance message layout was restored to the compact v0.3.29 style: summary with total/on-site counts plus one `<pre>` table, coloured marks inside rows, full employee names/positions, and no per-row `<code>` layout.
+- Removed the v0.3.30 daily table summary and table-specific status reordering.
+- Header/data column widths are now calculated from the actual daily rows (UTF-8 aware), so headings align with employee, position, arrival, departure and state columns without clipping values.
