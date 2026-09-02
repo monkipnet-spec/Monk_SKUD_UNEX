@@ -84,6 +84,34 @@ std::vector<DailyAttendance> AttendanceEngine::todayAttendance()const{
     }
     return rows;
 }
+
+bool AttendanceEngine::resetSiteActivity(){
+    std::lock_guard lk(mu_);
+    const auto old_states=states_;
+    const auto old_activities=activities_;
+
+    states_.clear();
+    activities_.clear();
+
+    if(!store_.saveCardStates({})){
+        states_=old_states;
+        activities_=old_activities;
+        return false;
+    }
+    if(!store_.saveActivities({})){
+        states_=old_states;
+        activities_=old_activities;
+        std::map<std::string,PersistedCardState> restored_states;
+        for(const auto&[key,state]:states_)restored_states[key]={state.presence,state.last_read_text};
+        std::vector<CardActivity> restored_activities;
+        restored_activities.reserve(activities_.size());
+        for(const auto&[_,activity]:activities_)restored_activities.push_back(activity);
+        store_.saveCardStates(restored_states);
+        store_.saveActivities(restored_activities);
+        return false;
+    }
+    return true;
+}
 void AttendanceEngine::refreshUserMetadata(){
     std::lock_guard lk(mu_);
     for(auto&[card,a]:activities_){auto u=users_.byCard(card);if(u){a.user_id=u->id;a.user_name=u->last_name+" "+u->first_name;a.department=u->department;}else{a.user_id=0;a.user_name.clear();a.department.clear();}}

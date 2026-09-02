@@ -755,6 +755,19 @@ async function saveReportSchedule(){
     await loadReportSettings();
 }
 
+async function resetSiteActivity(){
+    if(!confirm('Сбросить текущее состояние «На объекте»?\n\nБудут очищены только текущее присутствие и кэш последней активности карт. История посещаемости и отчёты останутся без изменений.'))return;
+    const b=window.resetSiteActivityButton,m=window.siteActivityResetMsg;
+    if(b)b.disabled=true;if(m)m.textContent='Сбрасываю текущее состояние...';
+    try{
+        const r=await api('/api/settings/reset-site-activity',{method:'POST'});let j={};try{j=await r.json();}catch{}
+        if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+        if(m)m.textContent='Активность на объекте сброшена. Сейчас на объекте: 0. Следующее считывание пользователя будет новым приходом.';
+        await refreshStatus();
+    }catch(e){if(m)m.textContent='Ошибка сброса: '+(e&&e.message?e.message:e);}
+    finally{if(b)b.disabled=false;}
+}
+
 async function importSettings(file){if(!file)return;let text=await file.text();let r=await api('/api/import/settings',{method:'POST',headers:{'Content-Type':'text/plain'},body:text});let j=await r.json();alert(j.ok?'Настройки импортированы. Перезапустите службу.':'Ошибка импорта');}
 settingsForm.onsubmit=async e=>{e.preventDefault();let o=Object.fromEntries(new FormData(settingsForm));o.telegram_enabled=settingsForm.telegram_enabled.checked?'1':'0';let r=await api('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(o)});let j=await r.json();settingsMsg.textContent=j.ok?'Сохранено. Для порта/COM выполните перезапуск службы.':'Ошибка';}
 async function testTelegram(){let r=await api('/api/telegram/test',{method:'POST'}),j=await r.json();alert(j.ok?'Сообщение отправлено':'Ошибка: '+j.error)}

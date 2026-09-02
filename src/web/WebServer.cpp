@@ -565,6 +565,11 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/api/import/users"&&r.method=="POST"){std::string err;bool ok=users_.importCsv(r.body,err);if(ok)departments_.ensure(users_.usedDepartments());attendance_.refreshUserMetadata();return{200,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};}
     if(r.path=="/api/export/settings"){Res x{200,"text/plain; charset=utf-8",cfg_.raw()};x.headers.push_back({"Content-Disposition","attachment; filename=system.conf"});return x;}
     if(r.path=="/api/import/settings"&&r.method=="POST"){bool ok=cfg_.replaceRaw(r.body);return{200,"application/json",ok?"{\"ok\":true}":"{\"ok\":false}"};}
+    if(r.path=="/api/settings/reset-site-activity"&&r.method=="POST"){
+        const bool ok=attendance_.resetSiteActivity();
+        if(!ok)return{500,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"Не удалось очистить текущее состояние активности в хранилище\"}"};
+        return{200,"application/json; charset=utf-8","{\"ok\":true,\"present_count\":0}"};
+    }
     if(r.path=="/api/settings/save"&&r.method=="POST"){auto f=util::parseForm(r.body);if(!f["username"].empty())cfg_.set("auth.username",f["username"]);if(!f["password"].empty()){auto salt=util::randomToken(16);cfg_.set("auth.salt",salt);cfg_.set("auth.password_hash",util::sha256Hex(salt+f["password"]));}if(!f["port"].empty())cfg_.set("server.port",f["port"]);if(!f["serial_device"].empty())cfg_.set("serial.device",f["serial_device"]);cfg_.set("telegram.enabled",f["telegram_enabled"]=="1"?"true":"false");cfg_.set("telegram.bot_token",f["bot_token"]);cfg_.set("telegram.chat_id",f["chat_id"]);cfg_.save();return{200,"application/json","{\"ok\":true,\"restart_required\":true}"};}
     return{404,"application/json","{\"error\":\"not found\"}"};
 }

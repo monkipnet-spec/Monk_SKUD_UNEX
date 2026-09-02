@@ -1,4 +1,4 @@
-Monk_SKUD_UNEX v0.3.16
+Monk_SKUD_UNEX v0.3.20
 - Full sync preflight: EEPROM 0x0016 bit 0x20 is cleared through 20H and verified by 12H.
 - Every absent H-series address 0..1023 is forcibly rewritten by 83H zeros and verified by 87H, even when pre-read would look empty.
 - Web range checks accept Address 0; full-sync warning no longer mentions 85H.
@@ -51,3 +51,13 @@ v0.3.19 checks:
 - Daily aggregation fixture final departure 18:00: PASS, first arrival 08:00 retained and final departure 18:00 shown
 - Cleanup script CSV fixture: PASS; attendance rows deleted while raw diagnostic row preserved
 - Users toolbar EEPROM button check: PASS
+
+Site activity reset: clears current presence state + card activity cache only; attendance history preserved.
+
+v0.3.20 checks:
+- Release build: PASS
+- web/app.js syntax: PASS
+- Settings action: POST /api/settings/reset-site-activity
+- Site activity reset clears current attendance state and active-card cache only
+- Attendance event history, reports, users and controller-card catalog are preserved
+- Web cache revision: v=0320

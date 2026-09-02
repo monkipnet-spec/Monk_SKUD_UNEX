@@ -21,6 +21,7 @@ public:
     std::vector<User> presentUsers() const;
     std::vector<DailyAttendance> todayAttendance() const;
     void refreshUserMetadata();
+    bool resetSiteActivity();
 private:
     struct State { PresenceState presence{PresenceState::Absent}; std::chrono::system_clock::time_point last_read{}; bool has_last{false}; std::string last_read_text; };
     static std::chrono::system_clock::time_point parseTime(const std::string& s, bool& ok);

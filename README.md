@@ -524,3 +524,10 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - TXT attendance reports include the user's position.
 - The "Диагностика EEPROM" button was removed from the Users toolbar (controller diagnostics remain internal/available where otherwise used).
 - `scripts/clear_yesterday_attendance.sh` previews and, with `--yes`, deletes only yesterday's attendance event history; it does not alter current presence state, users, or the controller-card catalog.
+
+
+## v0.3.20
+
+- В `Настройки` добавлена кнопка **«Сбросить активность на объекте»**.
+- Сброс очищает только текущее состояние присутствия и кэш `active_cards`; следующий проход пользователя снова считается приходом.
+- Исторический журнал посещаемости, «Активность за сегодня», отчёты, пользователи и постоянный каталог карт контроллеров не удаляются.
