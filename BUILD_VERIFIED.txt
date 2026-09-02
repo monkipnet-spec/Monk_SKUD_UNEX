@@ -120,3 +120,13 @@ v0.3.26 checks:
 - Monitor refresh remains 3 seconds and preserves scroll position when worker data changes.
 - monitor.js rewritten to ES5 + XMLHttpRequest; monitor layout uses Flexbox instead of CSS Grid for older Android 5 WebView compatibility.
 - Web cache revision: v=0326
+
+
+v0.3.27 checks:
+- Release CMake build: PASS
+- Employee table body font restored to v0.3.25 scale (12..18 px responsive).
+- Employee status pill font restored to v0.3.25 scale (10..14 px responsive).
+- Compact monitor header retained.
+- Cyclic overflow auto-scroll retained.
+- Monitor refresh remains 3 seconds.
+- Web cache revision: v=0327

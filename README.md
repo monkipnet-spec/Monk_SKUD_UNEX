@@ -584,3 +584,9 @@ The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the
 - Cyclic automatic employee-list scrolling when rows do not fit on screen.
 - 3-second realtime refresh is retained without full-page reload.
 - Monitor JavaScript/CSS avoids modern-only Fetch/async and CSS Grid so older Android 5 WebView installations have a better compatibility path.
+
+
+## TV monitor v0.3.27
+- Restored the employee-row font size from v0.3.25 for better TV readability.
+- Compact header from v0.3.26 is retained.
+- Cyclic auto-scroll remains enabled when the employee table exceeds the available height.
