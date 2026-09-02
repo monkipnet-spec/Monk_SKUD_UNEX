@@ -73,3 +73,14 @@ v0.3.21 checks:
 - FIFO safety: 37H is skipped when local persistence fails
 - UI: Controllers and Live protocol are nested in Settings; standalone top-nav entries removed
 - Web cache revision: v=0321
+
+
+v0.3.22 checks:
+- Settings submenu: Основные / Контроллеры / LIVE протокол
+- Controllers refresh button: reloads /api/controllers and shows refresh time
+- Live polling active only in LIVE submenu
+- Web cache revision: v=0322
+- Release CMake build: PASS
+- web/app.js syntax: PASS
+- Settings submenu DOM/actions: PASS
+- Controllers "Обновить" action: PASS

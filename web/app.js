@@ -24,10 +24,21 @@ let PROTOCOL_TIMER=null;
 let SOYAL_RECORDS=[];
 let SOYAL_IMPORT_META=null;
 let SOYAL_ASSIGN_RECORD=null;
+let SETTINGS_SECTION='general';
 
 function enc(o){return new URLSearchParams(o)}
 async function api(url,opt={}){let r=await fetch(url,opt);if(r.status===401){location='/login.html';throw new Error('auth');}return r}
-function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='reports')loadReportSettings();if(id==='settings'){loadControllers();startProtocolLive();}else stopProtocolLivePolling();}
+function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');if(id==='dashboard')loadTodayAttendance();if(id==='cards')loadCards();if(id==='users')loadUsers();if(id==='departments'){loadUsers().then(()=>loadDepartments());}if(id==='reports')loadReportSettings();if(id==='settings')settingsTab(SETTINGS_SECTION||'general');else stopProtocolLivePolling();}
+
+function settingsTab(id){
+    SETTINGS_SECTION=id||'general';
+    document.querySelectorAll('#settings .settings-panel').forEach(x=>x.classList.add('hidden'));
+    document.querySelectorAll('#settings .settings-subnav button').forEach(x=>x.classList.toggle('active',x.dataset.settingsTab===SETTINGS_SECTION));
+    const panel=document.getElementById('settings-'+SETTINGS_SECTION);if(panel)panel.classList.remove('hidden');
+    if(SETTINGS_SECTION==='controllers'){stopProtocolLivePolling();loadControllers();}
+    else if(SETTINGS_SECTION==='live'){startProtocolLive();}
+    else stopProtocolLivePolling();
+}
 
 function formatUptime(total){total=Math.max(0,Math.floor(Number(total)||0));const d=Math.floor(total/86400);total%=86400;const h=Math.floor(total/3600);total%=3600;const m=Math.floor(total/60);const sec=total%60;const clock=[h,m,sec].map(x=>String(x).padStart(2,'0')).join(':');return d>0?d+'д '+clock:clock;}
 async function refreshStatus(){let r=await api('/api/status');let s=await r.json();if(window.presentCount)presentCount.textContent=s.present_count||0;if(window.registeredCount)registeredCount.textContent=s.registered_count||0;if(window.cpuLoad)cpuLoad.textContent=Number(s.cpu_percent||0).toFixed(1)+'%';if(window.ramLoad)ramLoad.textContent=Number(s.ram_percent||0).toFixed(1)+'%';if(window.ramDetail)ramDetail.textContent=(s.ram_used_mb||0)+' / '+(s.ram_total_mb||0)+' MB';if(window.uptimeValue)uptimeValue.textContent=formatUptime(s.uptime_seconds);}
@@ -135,7 +146,14 @@ async function clearControllerCardCatalog(){
     if(!confirm('Очистить только каталог считанных карт? Пользователи, их карты и журнал посещаемости останутся без изменений.'))return;
     const r=await api('/api/cards/controller/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:''});const j=await r.json();if(!r.ok||!j.ok)return alert('Не удалось очистить каталог');await loadCards();
 }
-async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`).join('');return CONTROLLERS;}
+async function loadControllers(){CONTROLLERS=await (await api('/api/controllers')).json();if(window.controllersBody)controllersBody.innerHTML=CONTROLLERS.length?CONTROLLERS.map(c=>`<tr><td>${c.node}</td><td><input value="${attr(c.name)}" onchange="renameController(${c.node},this.value)"></td><td>${esc(c.model)}</td><td class="${c.online?'ok':'bad'}">${c.online?'ONLINE':'OFFLINE'}</td><td>${esc(c.last_seen||'')}</td><td><code>${esc(c.last_raw_hex||'')}</code></td><td><button class="mini" onclick="disablePassAnyCards(${c.node})">Отключить пропуск любой карты</button></td></tr>`).join(''):'<tr><td colspan="7" class="muted">Контроллеры ещё не обнаружены</td></tr>';return CONTROLLERS;}
+async function refreshControllers(){
+    const b=window.refreshControllersButton,m=window.controllersRefreshStatus;
+    if(b)b.disabled=true;if(m)m.textContent='Обновление...';
+    try{await loadControllers();if(m)m.textContent='Обновлено: '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+    catch(e){if(m)m.textContent='Ошибка обновления';}
+    finally{if(b)b.disabled=false;}
+}
 
 async function disablePassAnyCards(node){
     const c=CONTROLLERS.find(x=>Number(x.node)===Number(node));const name=c?controllerDisplayName(c):('UNEX 721 #'+node);

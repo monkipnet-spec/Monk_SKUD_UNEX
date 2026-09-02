@@ -542,3 +542,11 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - Controller RAW frames are deduplicated before state mutation. MariaDB also uses a deterministic controller-event source key, preventing a restart between database insert and `37H` from creating a second attendance transition.
 - CSV fallback storage writes historical events into the file matching the controller event date instead of the server's current date.
 - `Контроллеры` and `Live протокол` were removed from the top navigation and moved into `Настройки`; opening Settings loads controllers and starts Live protocol polling.
+
+
+## v0.3.22 — Settings submenu for hardware tools
+
+- `Настройки` now has its own submenu: **Основные**, **Контроллеры**, **LIVE протокол**.
+- Controller and protocol views no longer render as one long Settings page.
+- Live polling runs only while the **LIVE протокол** submenu is open.
+- The **Контроллеры** submenu has an explicit **Обновить** button that reloads current controller status, last response and RAW data from `/api/controllers`.

@@ -62,3 +62,5 @@ header{position:sticky;top:0;z-index:1000}
 @media(max-width:800px){header{flex-wrap:wrap}.header-clock{order:2;margin-left:auto}.header-right{order:3;width:100%;justify-content:flex-end}.site-presence{min-width:135px}}
 
 .eeprom-compact-probe{margin-top:12px;padding:10px;border:1px solid var(--line,#d0d7de);border-radius:8px}.eeprom-compact-probe label{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.eeprom-compact-probe input{font-family:Consolas,"Courier New",monospace;min-width:180px}.eeprom-compact-probe small{display:block;margin-top:6px}
+
+.settings-subnav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;padding:8px;background:#fff;border:1px solid #dce2e8;border-radius:10px}.settings-subnav button{background:#eaf0f6;color:#223}.settings-subnav button.active{background:#2563eb;color:#fff}.settings-panel{min-width:0}.controller-refresh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.controller-refresh small{white-space:nowrap}@media(max-width:700px){.settings-subnav{position:sticky;top:64px;z-index:20}.controller-refresh{align-items:flex-start;flex-direction:column}}
