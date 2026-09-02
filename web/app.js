@@ -40,8 +40,8 @@ function timeOnly(value){if(!value)return '—';const s=String(value);return s.l
 async function loadTodayAttendance(){
     let a=await (await api('/api/attendance/today')).json();
     if(!window.todayAttendanceBody)return;
-    if(!a.length){todayAttendanceBody.innerHTML='<tr><td colspan="6" class="muted">Нет событий за сегодня</td></tr>';return;}
-    todayAttendanceBody.innerHTML=a.map(x=>`<tr><td><b>${esc(x.user_name||('Пользователь №'+x.user_id))}</b></td><td>${esc(x.department||'—')}</td><td>${esc(cardTextFromRaw(x.card||''))}</td><td>${timeOnly(x.arrival_time)}</td><td>${timeOnly(x.departure_time)}</td><td><span class="status-pill ${x.status==='at_work'?'status-present':'status-left'}">${x.status==='at_work'?'На работе':'Ушёл'}</span></td></tr>`).join('');
+    if(!a.length){todayAttendanceBody.innerHTML='<tr><td colspan="7" class="muted">Нет событий за сегодня</td></tr>';return;}
+    todayAttendanceBody.innerHTML=a.map(x=>`<tr><td><b>${esc(x.user_name||('Пользователь №'+x.user_id))}</b></td><td>${esc(x.position||'—')}</td><td>${esc(x.department||'—')}</td><td>${esc(cardTextFromRaw(x.card||''))}</td><td>${timeOnly(x.arrival_time)}</td><td>${timeOnly(x.departure_time)}</td><td><span class="status-pill ${x.status==='at_work'?'status-present':'status-left'}">${x.status==='at_work'?'На работе':'Ушёл'}</span></td></tr>`).join('');
 }
 
 function userCardIds(u){

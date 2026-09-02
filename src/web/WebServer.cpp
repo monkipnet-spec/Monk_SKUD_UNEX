@@ -110,6 +110,7 @@ WebServer::Res WebServer::jsonTodayAttendance(){
         if(!first)o<<',';first=false;
         o<<"{\"user_id\":"<<a.user_id
          <<",\"user_name\":\""<<util::jsonEscape(a.user_name)<<"\""
+         <<",\"position\":\""<<util::jsonEscape(a.position)<<"\""
          <<",\"department\":\""<<util::jsonEscape(a.department)<<"\""
          <<",\"card\":\""<<util::jsonEscape(a.card)<<"\""
          <<",\"arrival_time\":\""<<util::jsonEscape(a.arrival_time)<<"\""

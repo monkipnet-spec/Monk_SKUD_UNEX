@@ -181,11 +181,13 @@ bool ReportManager::build(const std::string& from, const std::string& to,
             // only as a fallback for older/partial event files.
             if (auto u = users_.byId(row.user_id)) {
                 if (row.user_name.empty()) row.user_name = userName(*u);
+                row.position = u->position;
                 if (row.department.empty()) row.department = u->department;
                 if (row.card.empty()) row.card = u->card;
             }
 
             details << n << ". " << (row.user_name.empty() ? ("Пользователь №" + std::to_string(row.user_id)) : row.user_name) << "\n";
+            details << "   Должность: " << (row.position.empty() ? "—" : row.position) << "\n";
             details << "   Отдел: " << (row.department.empty() ? "—" : row.department) << "\n";
             details << "   Карта: " << displayCard(row.card) << "\n";
             details << "   Первый приход: " << timeOnly(row.arrival_time) << "\n";

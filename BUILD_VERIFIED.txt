@@ -34,3 +34,20 @@ v0.3.18 checks:
 - PTY focused action fixture: 12H A5 -> 20H 85 -> ACK -> 12H 85: PASS
 - Exact node 2 write frame: 7E 08 02 20 00 16 01 85 4F 0D
 - Result message exposes 0xA5 -> 0x85 and decimal 165 -> 133
+
+
+v0.3.19 checks:
+- Verification: PASS
+- Accidental repeat policy: existing installs migrate once to 5 seconds; later manual config changes are preserved
+- Daily attendance: first arrival is retained; an intermediate departure is cleared if the user returns; last departure after the final return becomes the final departure
+- Dashboard: Position column immediately after User
+- Reports: Position line added
+- Users toolbar: EEPROM diagnostics button removed
+- Safe yesterday attendance cleanup script added
+- Release CMake build: PASS
+- web/app.js syntax: PASS
+- clear_yesterday_attendance.sh syntax: PASS
+- Daily aggregation fixture (arrival 08:00 -> departure 12:00 -> return 12:30): PASS, departure hidden while present
+- Daily aggregation fixture final departure 18:00: PASS, first arrival 08:00 retained and final departure 18:00 shown
+- Cleanup script CSV fixture: PASS; attendance rows deleted while raw diagnostic row preserved
+- Users toolbar EEPROM button check: PASS

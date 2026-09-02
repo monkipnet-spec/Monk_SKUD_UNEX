@@ -68,6 +68,7 @@ struct ControllerCardRecord {
 struct DailyAttendance {
     int user_id{};
     std::string user_name;
+    std::string position;
     std::string department;
     std::string card;
     std::string arrival_time;

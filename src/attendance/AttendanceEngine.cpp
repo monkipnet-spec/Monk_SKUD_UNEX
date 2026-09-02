@@ -80,7 +80,7 @@ std::vector<DailyAttendance> AttendanceEngine::todayAttendance()const{
     auto rows=store_.loadDailyAttendance(util::todayLocal());
     for(auto& row:rows){
         auto u=users_.byId(row.user_id);if(!u)continue;
-        row.user_name=u->last_name+" "+u->first_name;if(!u->middle_name.empty())row.user_name+=" "+u->middle_name;row.department=u->department;
+        row.user_name=u->last_name+" "+u->first_name;if(!u->middle_name.empty())row.user_name+=" "+u->middle_name;row.position=u->position;row.department=u->department;
     }
     return rows;
 }

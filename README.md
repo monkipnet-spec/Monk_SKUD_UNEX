@@ -515,3 +515,12 @@ Mode mapping follows the command pages 83H/87H: `0=Invalid`, `1=Card only`, `2=C
 - User slots are not read, cleared or rewritten by this focused action.
 - Result is shown directly on the Controllers page, including the old/new 24* byte in hexadecimal and decimal.
 - Live protocol receives the raw 12H/20H frames plus a semantic completion entry.
+
+## v0.3.19 attendance/UI changes
+
+- Accidental repeated-card window is now 5 seconds by default (`attendance.accidental_repeat_seconds=5`).
+- Daily attendance keeps one row per user/day: the first arrival stays fixed; if a user leaves and then returns, the intermediate departure is cleared from the daily view and the next/last departure becomes the final departure for that day.
+- Dashboard "Активность за сегодня" includes the user's position immediately after the user name.
+- TXT attendance reports include the user's position.
+- The "Диагностика EEPROM" button was removed from the Users toolbar (controller diagnostics remain internal/available where otherwise used).
+- `scripts/clear_yesterday_attendance.sh` previews and, with `--yes`, deletes only yesterday's attendance event history; it does not alter current presence state, users, or the controller-card catalog.
