@@ -182,3 +182,14 @@ v0.3.34 MAG250 pinned-status checks:
 - Absent label: ОТСУТСТВУЕТ.
 - Auto-scroll step: 4 px per 100 ms (2x previous speed).
 - Fixed at_work/left rows use enlarged font sizes.
+
+
+v0.3.35 MAG250 dynamic-column checks:
+- Project version: 0.3.35.
+- Position/department/arrival/departure widths are measured from the widest rendered value plus cell padding.
+- Employee column receives remaining table width.
+- Fixed-row larger font is included in measurements.
+- Legacy ES5/WebKit-compatible implementation: no let/const, arrow functions, Promise or fetch.
+
+- CMake Release build: PASS (2026-09-04).
+- mag250.js syntax/static legacy scan: PASS.
