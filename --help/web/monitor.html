@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Monk SKUD — Монитор объекта</title>
+<link rel="stylesheet" href="/monitor.css?v=0329">
+</head>
+<body>
+<div class="screen">
+  <header class="topbar">
+    <div>
+      <div class="brand">MONK SKUD</div>
+      <div class="subtitle">Мониторинг присутствия на объекте</div>
+    </div>
+    <div class="clock-wrap">
+      <div id="clock" class="clock">--:--:--</div>
+      <div id="date" class="date">--.--.----</div>
+    </div>
+    <div id="connection" class="connection"><span></span><b>ПОДКЛЮЧЕНИЕ</b></div>
+  </header>
+
+  <section class="summary">
+    <div class="metric total"><span>Всего работников</span><b id="totalWorkers">0</b></div>
+    <div class="metric present"><span>На объекте</span><b id="presentWorkers">0</b></div>
+    <div class="metric away"><span>Вне объекта</span><b id="awayWorkers">0</b></div>
+    <div class="metric controllers"><span>Контроллеры</span><b id="controllersState">0 / 0</b><small>ONLINE</small></div>
+  </section>
+
+  <section class="table-card">
+    <div class="table-title">
+      <div><b>Сотрудники</b><span>Обновление каждые 3 секунды</span></div>
+      <div id="updatedAt" class="updated">Ожидание данных…</div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Статус</th><th>Сотрудник</th><th>Должность</th><th>Отдел</th><th>Приход</th><th>Уход</th></tr></thead>
+        <tbody id="workers"><tr><td colspan="6" class="empty">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+<script src="/monitor.js?v=0329"></script>
+</body>
+</html>

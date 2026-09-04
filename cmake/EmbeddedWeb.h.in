@@ -16,4 +16,10 @@ inline constexpr unsigned char monitor_js[] = {@EMBED_MONITOR_JS@};
 inline constexpr std::size_t monitor_js_size = sizeof(monitor_js);
 inline constexpr unsigned char monitor_css[] = {@EMBED_MONITOR_CSS@};
 inline constexpr std::size_t monitor_css_size = sizeof(monitor_css);
+inline constexpr unsigned char mag250_html[] = {@EMBED_MAG250_HTML@};
+inline constexpr std::size_t mag250_html_size = sizeof(mag250_html);
+inline constexpr unsigned char mag250_js[] = {@EMBED_MAG250_JS@};
+inline constexpr std::size_t mag250_js_size = sizeof(mag250_js);
+inline constexpr unsigned char mag250_css[] = {@EMBED_MAG250_CSS@};
+inline constexpr std::size_t mag250_css_size = sizeof(mag250_css);
 }

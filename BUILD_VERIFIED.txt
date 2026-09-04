@@ -154,3 +154,21 @@ v0.3.31 checks:
 - Full employee names/positions retained; no v0.3.30 clipping.
 - UTF-8-aware dynamic header/data column widths.
 - Telegram summary restored to total workers + current on-site count; TXT document delivery retained.
+
+v0.3.32 MAG250 portal checks:
+- CMake Release build: PASS.
+- /mag250/, /mag250/index.html routes added without admin authentication.
+- MAG250 portal uses ES5-style JavaScript + XMLHttpRequest, 3-second polling; JSON.parse has an old-WebKit eval fallback.
+- No flex/grid/fetch/promise/async/await/let/const/requestAnimationFrame in mag250 assets.
+- Cyclic overflow autoscroll + remote Up/Down/Enter handlers included.
+- Runtime HTTP smoke test: PASS (`/mag250/`, `/mag250.css`, `/mag250.js`, `/api/monitor` all HTTP 200 on a temporary runtime).
+- Runtime `/api/monitor` JSON parse/key check: PASS.
+- Actual MAG250 hardware rendering: NOT YET VERIFIED; portal is deliberately constrained to old-WebKit-compatible primitives for first-device test.
+
+v0.3.33 MAG250 compact-header checks:
+- Project version: 0.3.33.
+- MONK SKUD branding removed from MAG250 visible portal markup.
+- Total-workers and controllers summary cards removed from MAG250 portal.
+- Present/away counters moved into the clock top bar.
+- MAG250 table card starts directly below the top bar.
+- 3-second refresh and legacy-WebKit JavaScript path preserved.

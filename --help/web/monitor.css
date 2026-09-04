@@ -1,0 +1,46 @@
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07111f;font-family:Arial,"Segoe UI",Roboto,sans-serif;color:#eef7ff}
+body{padding:7px;background:radial-gradient(circle at 15% 0,#15304b 0,#07111f 38%,#050b14 100%)}
+.screen{height:100%;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column}
+
+/* Compact TV header: roughly one third of the original visual height. */
+.topbar{min-height:34px;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:space-between;justify-content:space-between;margin-bottom:5px;padding:1px 4px}
+.topbar>div:first-child{-webkit-flex:1 1 34%;flex:1 1 34%;min-width:0}
+.brand{font-size:14px;line-height:15px;font-weight:900;letter-spacing:.08em}
+.subtitle{margin-top:1px;color:#90a9c0;font-size:8px;line-height:10px}
+.clock-wrap{-webkit-flex:0 0 auto;flex:0 0 auto;text-align:center;padding:0 12px}
+.clock{font-size:19px;line-height:20px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.date{margin-top:0;color:#90a9c0;font-size:8px;line-height:10px}
+.connection{-webkit-flex:1 1 34%;flex:1 1 34%;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:flex-end;justify-content:flex-end;color:#ffc85a;font-size:9px;white-space:nowrap}
+.connection span{width:7px;height:7px;margin-right:5px;border-radius:50%;background:#ffc85a;box-shadow:0 0 0 3px rgba(255,200,90,.12)}
+.connection.ok{color:#2ee58a}.connection.ok span{background:#2ee58a;box-shadow:0 0 0 3px rgba(46,229,138,.12)}
+.connection.bad{color:#ff5d70}.connection.bad span{background:#ff5d70;box-shadow:0 0 0 3px rgba(255,93,112,.12)}
+
+/* Flexbox instead of CSS Grid so the monitor also works on old Android 5 WebView. */
+.summary{display:-webkit-flex;display:flex;width:100%;margin-bottom:6px}
+.metric{position:relative;overflow:hidden;-webkit-flex:1 1 25%;flex:1 1 25%;min-width:0;min-height:56px;margin-right:6px;padding:8px 11px;border:1px solid #203a54;border-radius:11px;background:linear-gradient(145deg,#11243a,#0b1726);box-shadow:0 7px 18px rgba(0,0,0,.22)}
+.metric:last-child{margin-right:0}.metric:after{content:"";position:absolute;right:-22px;top:-22px;width:75px;height:75px;border-radius:50%;background:currentColor;opacity:.07}
+.metric span{display:block;color:#90a9c0;font-size:9px;line-height:11px;font-weight:600}.metric b{display:block;margin-top:5px;font-size:26px;line-height:27px;font-variant-numeric:tabular-nums}.metric small{position:absolute;right:10px;bottom:7px;color:#90a9c0;font-size:8px;font-weight:800}
+.metric.total{color:#4ca7ff}.metric.present{color:#2ee58a}.metric.away{color:#ff5d70}.metric.controllers{color:#bd8cff}
+
+.table-card{min-height:0;-webkit-flex:1 1 auto;flex:1 1 auto;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;border:1px solid #203a54;border-radius:11px;background:rgba(9,23,39,.92);box-shadow:0 10px 28px rgba(0,0,0,.28);overflow:hidden}
+.table-title{min-height:31px;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:space-between;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #203a54;background:#0d1d30}
+.table-title b{font-size:12px}.table-title span{margin-left:8px;color:#90a9c0;font-size:8px}.updated{color:#90a9c0;font-size:8px}
+.table-scroll{position:relative;overflow-x:hidden;overflow-y:auto;min-height:0;-webkit-flex:1 1 auto;flex:1 1 auto;scroll-behavior:auto}
+.table-scroll::-webkit-scrollbar{width:4px}.table-scroll::-webkit-scrollbar-track{background:#081421}.table-scroll::-webkit-scrollbar-thumb{background:#28445f;border-radius:4px}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+thead{position:sticky;top:0;z-index:2;background:#11253b}
+th{height:25px;color:#a9c0d5;text-transform:uppercase;letter-spacing:.04em;font-size:8px;line-height:10px;text-align:left;padding:5px 8px;border-bottom:1px solid #203a54}
+td{height:29px;padding:5px 8px;border-bottom:1px solid #193149;font-size:clamp(12px,1vw,18px);line-height:1.15;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+tbody tr{background:#091827}tbody tr:nth-child(even){background:#0b1b2c}tbody tr.present-row{background:linear-gradient(90deg,#0a2c25,#0b1b2c 55%)}
+.worker-name{font-size:inherit;font-weight:800}.muted{color:#90a9c0}
+.status{display:inline-block;padding:3px 6px;border-radius:999px;font-weight:800;font-size:clamp(10px,.8vw,14px);line-height:1.15;white-space:nowrap}.status:before{content:"";display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;vertical-align:0}
+.status.present{background:#0c3b2a;color:#7cf4b5}.status.present:before{background:#2ee58a;box-shadow:0 0 0 2px rgba(46,229,138,.10)}.status.left{background:#3a1720;color:#ff9ba7}.status.left:before{background:#ff5d70}.status.absent{background:#1b2a39;color:#a9b7c5}.status.absent:before{background:#788b9e}
+.time{font-variant-numeric:tabular-nums;font-weight:700}.empty{text-align:center!important;color:#90a9c0;padding:25px!important}
+th:nth-child(1){width:14%}th:nth-child(2){width:23%}th:nth-child(3){width:20%}th:nth-child(4){width:18%}th:nth-child(5),th:nth-child(6){width:12.5%}
+
+@media(max-width:900px){body{padding:4px}.topbar{min-height:30px}.brand{font-size:12px}.subtitle{font-size:7px}.clock{font-size:16px}.date{font-size:7px}.connection{font-size:8px}.metric{min-height:48px;padding:6px 8px;margin-right:4px}.metric span{font-size:8px}.metric b{font-size:21px;line-height:23px}.table-title span{display:none}table{min-width:760px}th{font-size:7px;padding:4px 6px}td{height:26px;font-size:12px;padding:4px 6px}.worker-name{font-size:inherit}.status{font-size:10px}}
+
+/* v0.3.28: disabled users remain visible so monitor and UI totals match. */
+.status.disabled{background:#596170;color:#fff;border-color:#717b8d;}
+tr.disabled-row{opacity:.72;}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Monk_SKUD_UNEX VERSION 0.3.31 LANGUAGES CXX)
+project(Monk_SKUD_UNEX VERSION 0.3.33 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -23,6 +23,9 @@ skud_embed_file("${CMAKE_SOURCE_DIR}/web/style.css" EMBED_STYLE_CSS)
 skud_embed_file("${CMAKE_SOURCE_DIR}/web/monitor.html" EMBED_MONITOR_HTML)
 skud_embed_file("${CMAKE_SOURCE_DIR}/web/monitor.js" EMBED_MONITOR_JS)
 skud_embed_file("${CMAKE_SOURCE_DIR}/web/monitor.css" EMBED_MONITOR_CSS)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/mag250.html" EMBED_MAG250_HTML)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/mag250.js" EMBED_MAG250_JS)
+skud_embed_file("${CMAKE_SOURCE_DIR}/web/mag250.css" EMBED_MAG250_CSS)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated/skud")
 configure_file(
   "${CMAKE_SOURCE_DIR}/cmake/EmbeddedWeb.h.in"

@@ -614,3 +614,31 @@ The GitHub Actions workflow `.github/workflows/build-monitor-apk.yml` builds the
 - Telegram attendance message layout was restored to the compact v0.3.29 style: summary with total/on-site counts plus one `<pre>` table, coloured marks inside rows, full employee names/positions, and no per-row `<code>` layout.
 - Removed the v0.3.30 daily table summary and table-specific status reordering.
 - Header/data column widths are now calculated from the actual daily rows (UTF-8 aware), so headings align with employee, position, arrival, departure and state columns without clipping values.
+
+## v0.3.32 — отдельный портал для MAG250
+
+Добавлен облегчённый read-only монитор для старых приставок Infomir MAG250:
+
+- URL портала: `/mag250/` (также `/mag250` и `/mag250/index.html`);
+- использует тот же `/api/monitor`, поэтому данные совпадают с основным TV-монитором;
+- обновляет состояние раз в 3 секунды без перезагрузки страницы;
+- сотрудники на объекте идут первыми (порядок формируется сервером `/api/monitor`);
+- циклическая автопрокрутка включается только при переполнении списка;
+- клавиши ПДУ: Up/Down — ручная прокрутка, OK/Enter — немедленное обновление;
+- интерфейс намеренно написан без Flexbox/Grid, `fetch`, Promise, `async/await`, `let/const`, стрелочных функций и `requestAnimationFrame`, чтобы не зависеть от современного WebKit;
+- HTML/CSS/JS встроены в исполняемый файл и автоматически обновляются в runtime `web/` при запуске.
+
+Для MAG250 в настройках внешнего портала укажите, например:
+
+`http://192.168.1.50:8080/mag250/`
+
+Основной `/monitor.html` и Android-приложение не изменены.
+
+## v0.3.33 — компактная верхняя строка MAG250
+
+- В портале `/mag250/` полностью удалены название `MONK SKUD` и подпись портала.
+- Удалены отдельные карточки `Всего работников` и `Контроллеры`.
+- `На объекте` и `Вне объекта` перенесены в одну верхнюю строку с часами и датой.
+- Таблица сотрудников поднята сразу под верхнюю строку, поэтому получила больше места по вертикали.
+- Индикатор связи, обновление каждые 3 секунды, сортировка и циклическая автопрокрутка сохранены.
+- Основной `/monitor.html` и Android Monitor не изменялись.

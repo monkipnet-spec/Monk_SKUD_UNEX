@@ -71,6 +71,12 @@ bool ensureRuntimeLayout(const std::string& root, std::string& error) {
             reinterpret_cast<const char*>(embedded::monitor_js), embedded::monitor_js_size, error)) return false;
     if (!writeOrRefresh(base / "web" / "monitor.css",
             reinterpret_cast<const char*>(embedded::monitor_css), embedded::monitor_css_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "mag250.html",
+            reinterpret_cast<const char*>(embedded::mag250_html), embedded::mag250_html_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "mag250.js",
+            reinterpret_cast<const char*>(embedded::mag250_js), embedded::mag250_js_size, error)) return false;
+    if (!writeOrRefresh(base / "web" / "mag250.css",
+            reinterpret_cast<const char*>(embedded::mag250_css), embedded::mag250_css_size, error)) return false;
 
     return true;
 }

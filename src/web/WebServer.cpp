@@ -246,7 +246,7 @@ WebServer::Res WebServer::jsonSettings(){
      <<",\"notify_arrival\":"<<(cfg_.getBool("telegram.notify_arrival",true)?"true":"false")
      <<",\"notify_departure\":"<<(cfg_.getBool("telegram.notify_departure",true)?"true":"false")
      <<",\"report_text_copy\":"<<(cfg_.getBool("telegram.report_text_copy",true)?"true":"false")
-     <<",\"monitor_path\":\"/monitor.html\"}";
+     <<",\"monitor_path\":\"/monitor.html\",\"mag250_path\":\"/mag250/\"}";
     return{200,"application/json; charset=utf-8",o.str()};
 }
 
@@ -335,6 +335,9 @@ WebServer::Res WebServer::route(const Req&r){
     if(r.path=="/monitor"||r.path=="/monitor.html")return file("monitor.html","text/html; charset=utf-8");
     if(r.path=="/monitor.css")return file("monitor.css","text/css; charset=utf-8");
     if(r.path=="/monitor.js")return file("monitor.js","application/javascript; charset=utf-8");
+    if(r.path=="/mag250"||r.path=="/mag250/"||r.path=="/mag250/index.html")return file("mag250.html","text/html; charset=utf-8");
+    if(r.path=="/mag250.css")return file("mag250.css","text/css; charset=utf-8");
+    if(r.path=="/mag250.js")return file("mag250.js","application/javascript; charset=utf-8");
     if(r.path=="/api/monitor"&&r.method=="GET")return jsonMonitor();
     if(r.path=="/api/login"&&r.method=="POST"){auto f=util::parseForm(r.body);auto salt=cfg_.get("auth.salt");auto hash=util::sha256Hex(salt+f["password"]);if(f["username"]==cfg_.get("auth.username","admin")&&util::constantTimeEqual(hash,cfg_.get("auth.password_hash"))){auto sid=util::randomToken();{std::lock_guard lk(sessions_mu_);sessions_[sid]=f["username"];}Res x{200,"application/json","{\"ok\":true}"};x.headers.push_back({"Set-Cookie","SKUDSID="+sid+"; Path=/; HttpOnly; SameSite=Strict"});return x;}return{401,"application/json","{\"ok\":false}"};}
     if(r.path=="/login.html")return file("login.html","text/html; charset=utf-8");
