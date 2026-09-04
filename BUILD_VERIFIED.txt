@@ -193,3 +193,12 @@ v0.3.35 MAG250 dynamic-column checks:
 
 - CMake Release build: PASS (2026-09-04).
 - mag250.js syntax/static legacy scan: PASS.
+
+
+v0.3.36 MAG250 server-clock checks:
+- Project version: 0.3.36.
+- MAG250 visible clock no longer reads local device calendar components.
+- Clock is synchronized from /api/monitor generated_at (server local time).
+- Server timestamp is parsed to Date.UTC and rendered with UTC accessors, preventing MAG250 timezone from shifting displayed server time.
+- Clock advances once per second between 3-second API refreshes.
+- Cache revision: v=0336.

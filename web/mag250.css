@@ -33,4 +33,9 @@ tbody tr{background:#081827}tbody tr.alt{background:#0b1b2c}tbody tr.present-row
 .status .s-dot{display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:7px;background:#8093a6;vertical-align:1px}.status.present .s-dot{background:#31e78d}.status.left .s-dot{background:#ff6475}.status.disabled .s-dot{background:#b4bac2}
 .empty{padding:30px!important;text-align:center!important;color:#8faec8}
 
+
+/* v0.3.37: all employees fit on one screen; sizes are set by legacy JS. */
+#listScroll .workers-table{margin:0}
+#listScroll td{-webkit-transition:none;transition:none}
+#fixedWrap,#listScroll{overflow:hidden}
 @media screen and (min-height:900px){#topbar{height:55px}#clockbox{top:5px}#clock{font-size:31px;line-height:32px}.topmetric{top:7px;height:40px}.topmetric span{font-size:12px;line-height:40px}.topmetric b{font-size:31px;line-height:40px;margin-left:10px}#presentTop{left:18px}#awayTop{right:142px}#connection{top:18px;font-size:12px}#tablecard{top:62px}#tabletitle{height:38px;padding:9px 13px;font-size:14px}#tabletitle b{font-size:16px}#tabletitle em{top:10px;font-size:11px}#headwrap{top:38px;height:35px}#fixedWrap{top:73px}#listScroll{top:73px}th{height:35px;font-size:11px;padding:8px 11px}td{height:43px;font-size:22px;line-height:26px;padding:8px 11px}.status{font-size:16px;line-height:20px}#fixedWrap td{height:50px;font-size:27px;line-height:31px;padding-top:9px;padding-bottom:9px}#fixedWrap .worker-name{font-size:28px}#fixedWrap .status{font-size:19px;line-height:23px;padding:5px 9px}}
