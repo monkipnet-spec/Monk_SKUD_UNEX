@@ -272,6 +272,176 @@ bool ReportManager::build(const std::string& from, const std::string& to,
     return true;
 }
 
+bool ReportManager::buildExtended(const std::string& from, const std::string& to,
+                                  const std::vector<int>& user_ids,
+                                  AttendanceReport& report, std::string& error) const {
+    std::tm from_tm{}, to_tm{};
+    std::time_t from_t{}, to_t{};
+    if (!parseDate(from, from_tm, from_t) || !parseDate(to, to_tm, to_t)) {
+        error = "Неверная дата. Используйте формат YYYY-MM-DD";
+        return false;
+    }
+    if (from_t > to_t) {
+        error = "Начальная дата больше конечной";
+        return false;
+    }
+
+    int days = 0;
+    for (auto t = from_t; t <= to_t; t = shiftDays(t, 1)) {
+        ++days;
+        if (days > 3660) {
+            error = "Диапазон отчета слишком большой (максимум 3660 дней)";
+            return false;
+        }
+    }
+
+    const auto all_users = users_.list();
+    std::map<int, User> users_by_id;
+    for (const auto& u : all_users) users_by_id[u.id] = u;
+
+    std::vector<User> selected_users;
+    if (user_ids.empty()) {
+        selected_users = all_users;
+    } else {
+        std::set<int> seen;
+        for (int id : user_ids) {
+            if (id <= 0 || !seen.insert(id).second) continue;
+            auto it = users_by_id.find(id);
+            if (it == users_by_id.end()) {
+                error = "Пользователь №" + std::to_string(id) + " не найден";
+                return false;
+            }
+            selected_users.push_back(it->second);
+        }
+        if (selected_users.empty()) {
+            error = "Не выбран ни один пользователь";
+            return false;
+        }
+    }
+
+    std::sort(selected_users.begin(), selected_users.end(), [](const User& a, const User& b) {
+        const auto an = userName(a), bn = userName(b);
+        if (an != bn) return an < bn;
+        return a.id < b.id;
+    });
+
+    std::set<int> selected_ids;
+    for (const auto& u : selected_users) selected_ids.insert(u.id);
+    std::map<int, std::vector<AttendanceEvent>> events_by_user;
+    int total_events = 0;
+    int arrivals = 0;
+    int departures = 0;
+
+    for (auto t = from_t; t <= to_t; t = shiftDays(t, 1)) {
+        const auto date = formatDate(t);
+        const auto events = store_.loadAttendanceEventsByDate(date);
+        for (const auto& e : events) {
+            if (e.type != AttendanceEventType::Arrival && e.type != AttendanceEventType::Departure) continue;
+            if (e.user_id <= 0 || !selected_ids.count(e.user_id)) continue;
+            events_by_user[e.user_id].push_back(e);
+            ++total_events;
+            if (e.type == AttendanceEventType::Arrival) ++arrivals;
+            else ++departures;
+        }
+    }
+
+    std::ostringstream body;
+    body << "Monk SKUD UNEX\n";
+    body << "РАСШИРЕННЫЙ ОТЧЕТ ПО ПОЛЬЗОВАТЕЛЯМ\n";
+    body << "Все входы и выходы за указанный период\n";
+    body << "Период: " << from << " — " << to << "\n";
+    body << "Сформирован: " << util::nowLocal() << "\n\n";
+    body << "Выбрано пользователей: " << selected_users.size() << "\n";
+    body << "Всего событий: " << total_events << " (входов: " << arrivals << ", выходов: " << departures << ")\n\n";
+
+    int users_with_events = 0;
+    for (const auto& u : selected_users) {
+        auto& events = events_by_user[u.id];
+        std::sort(events.begin(), events.end(), [](const AttendanceEvent& a, const AttendanceEvent& b) {
+            if (a.timestamp != b.timestamp) return a.timestamp < b.timestamp;
+            return static_cast<int>(a.type) < static_cast<int>(b.type);
+        });
+        if (!events.empty()) ++users_with_events;
+
+        body << "======================================================================\n";
+        body << userName(u) << " (ID " << u.id << ")\n";
+        body << "Должность: " << (u.position.empty() ? "—" : u.position) << "\n";
+        body << "Отдел: " << (u.department.empty() ? "—" : u.department) << "\n";
+        body << "======================================================================\n";
+
+        if (events.empty()) {
+            body << "За выбранный период входов и выходов нет.\n\n";
+            continue;
+        }
+
+        int user_arrivals = 0, user_departures = 0, n = 0;
+        for (const auto& e : events) {
+            ++n;
+            const bool arrival = e.type == AttendanceEventType::Arrival;
+            if (arrival) ++user_arrivals; else ++user_departures;
+            body << std::setw(4) << n << ". "
+                 << (e.timestamp.empty() ? "—" : e.timestamp)
+                 << "  " << (arrival ? "ВХОД " : "ВЫХОД")
+                 << "  Карта: " << displayCard(e.card)
+                 << "  Контроллер: ";
+            if (e.controller_node > 0) body << e.controller_node; else body << "—";
+            if (!e.controller_name.empty()) body << " (" << e.controller_name << ")";
+            body << "\n";
+        }
+        body << "Итого по пользователю: входов " << user_arrivals
+             << ", выходов " << user_departures
+             << ", событий " << events.size() << "\n\n";
+    }
+
+    body << "----------------------------------------------------------------------\n";
+    body << "Пользователей с событиями: " << users_with_events << " из " << selected_users.size() << "\n";
+    body << "Всего входов: " << arrivals << "\n";
+    body << "Всего выходов: " << departures << "\n";
+    body << "Всего событий: " << total_events << "\n";
+
+    std::string selector = user_ids.empty() ? "all" : ("users" + std::to_string(selected_users.size()));
+    const auto filename = "attendance_extended_" + from + "_" + to + "_" + selector + ".txt";
+    const auto path = (std::filesystem::path(root_) / "data" / "reports" / filename).string();
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        error = "Не удалось создать файл отчета: " + path;
+        return false;
+    }
+    f << body.str();
+    if (!f) {
+        error = "Ошибка записи файла отчета";
+        return false;
+    }
+
+    report.from = from;
+    report.to = to;
+    report.filename = filename;
+    report.path = path;
+    report.content = body.str();
+    report.days = days;
+    report.rows = total_events;
+    report.users = static_cast<int>(selected_users.size());
+    error.clear();
+    return true;
+}
+
+bool ReportManager::sendExtendedToTelegram(const std::string& from, const std::string& to,
+                                           const std::vector<int>& user_ids,
+                                           AttendanceReport& report, std::string& error) const {
+    if (!buildExtended(from, to, user_ids, report, error)) return false;
+    std::ostringstream caption;
+    caption << "Monk SKUD UNEX — расширенный отчет\n"
+            << "Все входы/выходы: " << from << " — " << to
+            << "\nПользователей: " << report.users << ", событий: " << report.rows;
+    const int retries = std::max(1, cfg_.getInt("telegram.retry_count", 3));
+    for (int i = 0; i < retries; ++i) {
+        if (telegram_.sendDocument(report.path, caption.str(), error)) return true;
+        if (i + 1 < retries) std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+    return false;
+}
+
 bool ReportManager::sendToTelegram(const std::string& from, const std::string& to,
                                    AttendanceReport& report, std::string& error) const {
     if (!build(from, to, report, error)) return false;

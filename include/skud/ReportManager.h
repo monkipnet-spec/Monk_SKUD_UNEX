@@ -3,6 +3,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace skud {
 class Config;
@@ -53,6 +54,13 @@ public:
 
     bool build(const std::string& from, const std::string& to, AttendanceReport& report, std::string& error) const;
     bool sendToTelegram(const std::string& from, const std::string& to, AttendanceReport& report, std::string& error) const;
+
+    // Detailed per-user report: every persisted arrival and departure in the period.
+    // Empty user_ids means all current users.
+    bool buildExtended(const std::string& from, const std::string& to, const std::vector<int>& user_ids,
+                       AttendanceReport& report, std::string& error) const;
+    bool sendExtendedToTelegram(const std::string& from, const std::string& to, const std::vector<int>& user_ids,
+                                AttendanceReport& report, std::string& error) const;
 
     ReportSchedule schedule() const;
     bool saveSchedule(bool enabled, const std::string& period, const std::string& time,

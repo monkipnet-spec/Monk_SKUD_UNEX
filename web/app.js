@@ -751,6 +751,9 @@ async function loadReportSettings(resetRange=false){
     REPORT_RANGES={today:j.today,week:j.week,month:j.month};
     const from=document.getElementById('reportFrom'),to=document.getElementById('reportTo');
     if(from&&to&&(resetRange||!from.value||!to.value)){from.value=j.today.from;to.value=j.today.to;}
+    const exFrom=document.getElementById('extendedReportFrom'),exTo=document.getElementById('extendedReportTo');
+    if(exFrom&&exTo&&(resetRange||!exFrom.value||!exTo.value)){exFrom.value=j.today.from;exTo.value=j.today.to;}
+    await loadExtendedReportUsers();
     const sc=j.schedule||{};
     if(window.reportScheduleEnabled)reportScheduleEnabled.checked=!!sc.enabled;
     if(window.reportSchedulePeriod)reportSchedulePeriod.value=sc.period||'daily';
@@ -812,6 +815,70 @@ async function sendReportTelegram(){
     let j={};try{j=await r.json();}catch{}
     if(!r.ok||!j.ok){reportActionMsg.className='report-message bad';reportActionMsg.textContent='Ошибка Telegram: '+(j.error||'не удалось отправить файл');return;}
     reportActionMsg.className='report-message ok';reportActionMsg.textContent='Отчёт '+(j.filename||'')+' отправлен в Telegram.';
+}
+
+async function loadExtendedReportUsers(){
+    const box=document.getElementById('extendedReportUsers');if(!box)return;
+    if(!USERS_LOADED){USERS=await (await api('/api/users')).json();USERS_LOADED=true;}
+    const ordered=[...USERS].sort((a,b)=>{
+        const an=[a.last_name,a.first_name,a.middle_name].filter(Boolean).join(' ')||('Пользователь №'+a.id);
+        const bn=[b.last_name,b.first_name,b.middle_name].filter(Boolean).join(' ')||('Пользователь №'+b.id);
+        return an.localeCompare(bn,'ru')||Number(a.id)-Number(b.id);
+    });
+    box.innerHTML=ordered.map(u=>{
+        const name=[u.last_name,u.first_name,u.middle_name].filter(Boolean).join(' ')||('Пользователь №'+u.id);
+        return `<label class="check extended-user-item"><input type="checkbox" value="${Number(u.id)}"> <span><b>${esc(name)}</b><small>${esc(u.department||'Без отдела')}${u.position?' · '+esc(u.position):''}</small></span></label>`;
+    }).join('');
+    toggleExtendedReportUsers();
+}
+
+function toggleExtendedReportUsers(){
+    const all=document.getElementById('extendedReportAllUsers');
+    document.querySelectorAll('#extendedReportUsers input[type="checkbox"]').forEach(x=>x.disabled=!!(all&&all.checked));
+}
+
+async function applyExtendedReportPreset(kind){
+    if(!REPORT_RANGES[kind])await loadReportSettings();
+    const range=REPORT_RANGES[kind];if(!range)return;
+    extendedReportFrom.value=range.from;extendedReportTo.value=range.to;
+    if(window.extendedReportActionMsg)extendedReportActionMsg.textContent='';
+}
+
+function selectedExtendedReportRequest(){
+    const from=extendedReportFrom.value,to=extendedReportTo.value;
+    if(!from||!to){alert('Укажите начальную и конечную дату расширенного отчёта');return null;}
+    if(from>to){alert('Начальная дата не может быть больше конечной');return null;}
+    let users='';
+    if(!extendedReportAllUsers.checked){
+        const ids=[...document.querySelectorAll('#extendedReportUsers input[type="checkbox"]:checked')].map(x=>x.value);
+        if(!ids.length){alert('Выберите хотя бы одного пользователя или включите «Все пользователи»');return null;}
+        users=ids.join(',');
+    }
+    return {from,to,users};
+}
+
+async function previewExtendedReport(){
+    const req=selectedExtendedReportRequest();if(!req)return;
+    extendedReportActionMsg.className='report-message muted';extendedReportActionMsg.textContent='Формирование расширенного отчёта...';
+    const r=await api('/api/reports/extended/preview?'+new URLSearchParams(req));let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){extendedReportActionMsg.className='report-message bad';extendedReportActionMsg.textContent='Ошибка: '+(j.error||'не удалось сформировать расширенный отчёт');return;}
+    extendedReportPreview.textContent=j.content||'';
+    extendedReportActionMsg.className='report-message ok';
+    extendedReportActionMsg.textContent=`Сформирован ${j.filename}: ${j.days} дн., выбрано пользователей ${j.users}, входов/выходов ${j.rows}.`;
+}
+
+function downloadExtendedReport(){
+    const req=selectedExtendedReportRequest();if(!req)return;
+    location.href='/api/reports/extended/download?'+new URLSearchParams(req);
+}
+
+async function sendExtendedReportTelegram(){
+    const req=selectedExtendedReportRequest();if(!req)return;
+    if(!confirm(`Отправить расширенный TXT-отчёт со всеми входами/выходами за ${req.from} — ${req.to} в Telegram?`))return;
+    extendedReportActionMsg.className='report-message muted';extendedReportActionMsg.textContent='Формирование и отправка расширенного отчёта...';
+    const r=await api('/api/reports/extended/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:enc(req)});let j={};try{j=await r.json();}catch{}
+    if(!r.ok||!j.ok){extendedReportActionMsg.className='report-message bad';extendedReportActionMsg.textContent='Ошибка Telegram: '+(j.error||'не удалось отправить расширенный отчёт');return;}
+    extendedReportActionMsg.className='report-message ok';extendedReportActionMsg.textContent='Расширенный отчёт '+(j.filename||'')+' отправлен в Telegram.';
 }
 
 function updateReportScheduleFields(){

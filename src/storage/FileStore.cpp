@@ -102,6 +102,33 @@ std::vector<CardActivity> FileStore::loadActivities()const{
     std::lock_guard lk(mu_);std::vector<CardActivity>r;std::ifstream f(root_+"/data/active_cards.csv");std::string l;bool first=true;while(std::getline(f,l)){if(first){first=false;continue;}auto c=util::split(l,';');if(c.size()>=7){CardActivity x;x.card=c[0];try{x.user_id=std::stoi(c[1]);x.controller_node=std::stoi(c[6]);}catch(...){}x.user_name=c[2];x.department=c[3];x.last_read=c[4];x.last_event=c[5];r.push_back(x);}}return r;
 }
 
+std::vector<AttendanceEvent> FileStore::loadAttendanceEventsByDate(const std::string&date)const{
+    std::vector<AttendanceEvent> out;
+    if(usingMariaDb()){
+        if(!db_)return out;
+        std::string err;
+        if(!db_->loadEventsByDate(date,out,err)){
+            std::lock_guard lk(storage_mu_);storage_error_=err;out.clear();
+        }
+        return out;
+    }
+    std::lock_guard lk(mu_);
+    std::ifstream f(root_+"/data/events/"+date+".csv");
+    std::string line;bool first=true;
+    while(std::getline(f,line)){
+        if(first){first=false;continue;}
+        auto c=util::split(line,';');
+        if(c.size()<9)continue;
+        AttendanceEvent e;
+        e.timestamp=c[0];e.type=parseEventType(c[1]);e.card=c[2];
+        try{e.user_id=std::stoi(c[3]);e.controller_node=std::stoi(c[6]);}catch(...){continue;}
+        e.user_name=c[4];e.department=c[5];e.controller_name=c[7];e.raw_hex=c[8];
+        out.push_back(std::move(e));
+    }
+    std::sort(out.begin(),out.end(),[](const AttendanceEvent&a,const AttendanceEvent&b){return a.timestamp<b.timestamp;});
+    return out;
+}
+
 std::vector<DailyAttendance> FileStore::loadDailyAttendance(const std::string&date)const{
     std::vector<AttendanceEvent> events;
     if(usingMariaDb()){if(!db_)return{};std::string err;if(!db_->loadEventsByDate(date,events,err)){std::lock_guard lk(storage_mu_);storage_error_=err;return{};}}

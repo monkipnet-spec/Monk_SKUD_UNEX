@@ -20,6 +20,9 @@ public:
     std::map<std::string,PersistedCardState> loadCardStates() const;
     bool saveActivities(const std::vector<CardActivity>& activities);
     std::vector<CardActivity> loadActivities() const;
+    // Full persisted event stream for one controller-reported calendar date.
+    // Used by extended attendance reports to preserve every arrival/departure.
+    std::vector<AttendanceEvent> loadAttendanceEventsByDate(const std::string& date) const;
     std::vector<DailyAttendance> loadDailyAttendance(const std::string& date) const;
     bool backupFile(const std::string& path) const;
     bool usingMariaDb() const;

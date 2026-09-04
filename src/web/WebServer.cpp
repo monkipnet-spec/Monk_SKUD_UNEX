@@ -361,6 +361,22 @@ WebServer::Res WebServer::route(const Req&r){
         std::string err;bool ok=reports_.saveSchedule(f["enabled"]=="1",f["period"],f["time"],weekday,month_day,err);
         return{ok?200:400,"application/json",ok?"{\"ok\":true}":("{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}")};
     }
+    if(r.path=="/api/reports/extended/preview"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);AttendanceReport report;std::string err;auto ids=parseIntList(q["users"]);
+        if(!reports_.buildExtended(q["from"],q["to"],ids,report,err))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}"};
+        std::ostringstream o;o<<"{\"ok\":true,\"filename\":\""<<util::jsonEscape(report.filename)<<"\",\"days\":"<<report.days<<",\"users\":"<<report.users<<",\"rows\":"<<report.rows<<",\"content\":\""<<util::jsonEscape(report.content)<<"\"}";
+        return{200,"application/json; charset=utf-8",o.str()};
+    }
+    if(r.path=="/api/reports/extended/download"&&r.method=="GET"){
+        auto q=util::parseForm(r.query);AttendanceReport report;std::string err;auto ids=parseIntList(q["users"]);
+        if(!reports_.buildExtended(q["from"],q["to"],ids,report,err))return{400,"text/plain; charset=utf-8",err};
+        Res x{200,"text/plain; charset=utf-8",report.content};x.headers.push_back({"Content-Disposition","attachment; filename=\""+report.filename+"\""});return x;
+    }
+    if(r.path=="/api/reports/extended/send"&&r.method=="POST"){
+        auto f=util::parseForm(r.body);AttendanceReport report;std::string err;auto ids=parseIntList(f["users"]);bool ok=reports_.sendExtendedToTelegram(f["from"],f["to"],ids,report,err);
+        std::ostringstream o;o<<"{\"ok\":"<<(ok?"true":"false")<<",\"filename\":\""<<util::jsonEscape(report.filename)<<"\",\"error\":\""<<util::jsonEscape(err)<<"\"}";
+        return{ok?200:400,"application/json; charset=utf-8",o.str()};
+    }
     if(r.path=="/api/reports/preview"&&r.method=="GET"){
         auto q=util::parseForm(r.query);AttendanceReport report;std::string err;
         if(!reports_.build(q["from"],q["to"],report,err))return{400,"application/json","{\"ok\":false,\"error\":\""+util::jsonEscape(err)+"\"}"};

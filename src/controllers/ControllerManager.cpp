@@ -825,30 +825,70 @@ void ControllerManager::loop(){
         processOneUserDelete(proto);
         processOneUserUpload(proto);
 
+        // A refresh is a real bus scan, not merely a re-probe of controllers that
+        // are already present in the local database.  Previously the scan range was
+        // walked only when controllers_ had no enabled entries, so after the first
+        // controller had been discovered any additional controller on the same RS-485
+        // bus was invisible to the Refresh button.  24H is safe for identification.
+        const bool force_refresh=refresh_requested_.exchange(false);
         std::vector<int> nodes;
         {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
-        if(nodes.empty()){
+
+        if(force_refresh||nodes.empty()){
             int from=cfg_.getInt("controllers.scan_from",1),to=cfg_.getInt("controllers.scan_to",16);
+            from=std::clamp(from,0,255);
+            to=std::clamp(to,0,255);
+            if(from>to)std::swap(from,to);
+            appendProtocolTrace("INFO",0,0x24,"semantic",{},
+                "Сканирование RS-485 Node ID "+std::to_string(from)+".."+std::to_string(to)+" командой 24H");
+
+            bool changed=false;
             for(int n=from;n<=to&&running_;++n){
                 auto probe=proto.readNodeId(static_cast<std::uint8_t>(n));
                 if(!probe.ok)continue;
                 const int physical=probe.reported_node;
-                std::lock_guard lk(mu_);
-                if(std::none_of(controllers_.begin(),controllers_.end(),[&](auto&c){return c.node==physical;})){
-                    Controller c;c.node=physical;c.reported_node=physical;c.name="UNEX 721 #"+std::to_string(physical);c.online=true;c.last_seen=util::nowLocal();c.last_raw_hex=probe.raw_frame_hex;c.id_status="ID считан 24H";controllers_.push_back(c);
+                {
+                    std::lock_guard lk(mu_);
+                    auto it=std::find_if(controllers_.begin(),controllers_.end(),[&](const auto&c){return c.node==physical;});
+                    if(it==controllers_.end()){
+                        Controller c;
+                        c.node=physical;
+                        c.reported_node=physical;
+                        c.name="UNEX 721 #"+std::to_string(physical);
+                        c.online=true;
+                        c.last_seen=util::nowLocal();
+                        c.last_raw_hex=probe.raw_frame_hex;
+                        c.id_status="Обнаружен сканированием 24H";
+                        controllers_.push_back(std::move(c));
+                        changed=true;
+                    }else{
+                        it->reported_node=physical;
+                        it->online=true;
+                        it->last_seen=util::nowLocal();
+                        it->last_raw_hex=probe.raw_frame_hex;
+                        it->id_status="ID подтверждён сканированием 24H";
+                        changed=true;
+                    }
                 }
+                next_id_probe[physical]=std::chrono::steady_clock::now()+30s;
             }
-            saveControllers();
-            std::this_thread::sleep_for(300ms);continue;
+            if(changed)saveControllers();
+
+            // Rebuild the enabled-node list because the scan may have discovered
+            // additional controllers.  Newly found controllers are enabled by default.
+            nodes.clear();
+            {std::lock_guard lk(mu_);for(auto&c:controllers_)if(c.enabled)nodes.push_back(c.node);}
+            std::sort(nodes.begin(),nodes.end());
+            nodes.erase(std::unique(nodes.begin(),nodes.end()),nodes.end());
+            if(nodes.empty()){std::this_thread::sleep_for(300ms);continue;}
         }
 
-        const bool force_refresh=refresh_requested_.exchange(false);
         for(int node:nodes){
             if(!running_)break;
             const auto now=std::chrono::steady_clock::now();
             bool probe_attempted=false,probe_ok=false;
             auto pit=next_id_probe.find(node);
-            if(force_refresh||pit==next_id_probe.end()||now>=pit->second){
+            if(pit==next_id_probe.end()||now>=pit->second){
                 probe_attempted=true;
                 auto probe=proto.readNodeId(static_cast<std::uint8_t>(node));
                 probe_ok=probe.ok;

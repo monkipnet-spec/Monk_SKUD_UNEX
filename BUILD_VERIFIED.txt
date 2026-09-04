@@ -202,3 +202,23 @@ v0.3.36 MAG250 server-clock checks:
 - Server timestamp is parsed to Date.UTC and rendered with UTC accessors, preventing MAG250 timezone from shifting displayed server time.
 - Clock advances once per second between 3-second API refreshes.
 - Cache revision: v=0336.
+
+v0.3.38 extended user report checks:
+- Project version: 0.3.38.
+- New report UI supports one, several, or all users and an independent custom date range.
+- Extended report reads persisted event history and includes every arrival/departure event, not only first arrival/final departure.
+- Event rows include timestamp, event direction (ВХОД/ВЫХОД), card and controller.
+- Preview, TXT download and Telegram TXT delivery endpoints added.
+- CSV backend and MariaDB backend both use the same full-event report path.
+- Release CMake build: PASS.
+- web/app.js syntax: PASS.
+- Runtime fixture: selected user with arrival 08:00, departure 12:00, return 13:00, departure 17:00 produced 4 events (2 входа / 2 выхода): PASS.
+- Web cache revision: v=0338.
+
+v0.3.39 multi-controller discovery checks:
+- Project version: 0.3.39.
+- Refresh now scans controllers.scan_from..controllers.scan_to even when one or more controllers are already configured.
+- Discovery uses safe 24H Node-ID/RTC probe; 18H is not used.
+- Existing nodes are refreshed; newly reported physical Node IDs are added and persisted.
+- Full-range scan is not performed on every background poll cycle.
+- Release CMake build: PASS.
