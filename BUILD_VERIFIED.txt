@@ -172,3 +172,13 @@ v0.3.33 MAG250 compact-header checks:
 - Present/away counters moved into the clock top bar.
 - MAG250 table card starts directly below the top bar.
 - 3-second refresh and legacy-WebKit JavaScript path preserved.
+
+
+v0.3.34 MAG250 pinned-status checks:
+- Project version: 0.3.34.
+- at_work and left rows render in fixedWorkers above the scrolling list.
+- Fixed rows sorted by status rank: at_work, left, then name.
+- Scrolling list contains absent/disabled only.
+- Absent label: ОТСУТСТВУЕТ.
+- Auto-scroll step: 4 px per 100 ms (2x previous speed).
+- Fixed at_work/left rows use enlarged font sizes.
